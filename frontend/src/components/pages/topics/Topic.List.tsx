@@ -9,7 +9,7 @@
  * by the Apache License, Version 2.0
  */
 
-import React, { useRef, useState } from 'react';
+import React, { FC, useRef, useState } from 'react';
 import { autorun, IReactionDisposer, makeObservable, observable } from 'mobx';
 import { observer } from 'mobx-react';
 import { appGlobal } from '../../../state/appGlobal';
@@ -18,25 +18,53 @@ import { Topic, TopicAction, TopicActions, TopicConfigEntry } from '../../../sta
 import { uiSettings } from '../../../state/ui';
 import { editQuery } from '../../../utils/queryHelper';
 import { Code, DefaultSkeleton, QuickTable } from '../../../utils/tsxUtils';
-import { makePaginationConfig, renderLogDirSummary, sortField } from '../../misc/common';
-import { KowlTable } from '../../misc/KowlTable';
+import { renderLogDirSummary } from '../../misc/common';
 import { PageComponent, PageInitHelper } from '../Page';
 import { CheckIcon, CircleSlashIcon, EyeClosedIcon } from '@primer/octicons-react';
 import createAutoModal from '../../../utils/createAutoModal';
-import { CreateTopicModalContent, CreateTopicModalState, RetentionSizeUnit, RetentionTimeUnit } from './CreateTopicModal/CreateTopicModal';
+import {
+    CreateTopicModalContent,
+    CreateTopicModalState,
+    RetentionSizeUnit,
+    RetentionTimeUnit
+} from './CreateTopicModal/CreateTopicModal';
 import Section from '../../misc/Section';
 import PageContent from '../../misc/PageContent';
-import { Alert, AlertDialog, AlertDialogBody, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogOverlay, AlertIcon, Button, Checkbox, Flex, Icon, Popover, Text, Tooltip, useToast } from '@redpanda-data/ui';
+import {
+    Alert,
+    AlertDialog,
+    AlertDialogBody,
+    AlertDialogContent,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogOverlay,
+    AlertIcon,
+    Box,
+    Button,
+    Checkbox,
+    CopyButton,
+    DataTable,
+    Flex,
+    Grid,
+    Icon,
+    Popover,
+    Text,
+    Tooltip,
+    useToast
+} from '@redpanda-data/ui';
 import { HiOutlineTrash } from 'react-icons/hi';
-import { isServerless } from '../../../config';
 import { Statistic } from '../../misc/Statistic';
+import { Link } from 'react-router-dom';
+import SearchBar from '../../misc/SearchBar';
+import usePaginationParams from '../../../hooks/usePaginationParams';
+import { onPaginationChange } from '../../../utils/pagination';
 
 @observer
 class TopicList extends PageComponent {
-    pageConfig = makePaginationConfig(uiSettings.topicList.pageSize);
     quickSearchReaction: IReactionDisposer;
 
     @observable topicToDelete: null | Topic = null;
+    @observable filteredTopics: Topic[];
 
     CreateTopicModal;
     showCreateTopicModal;
@@ -54,7 +82,7 @@ class TopicList extends PageComponent {
         p.title = 'Topics';
         p.addBreadcrumb('Topics', '/topics');
 
-        this.refreshData(false);
+        this.refreshData(true);
         appGlobal.onRefresh = () => this.refreshData(true);
     }
 
@@ -79,7 +107,6 @@ class TopicList extends PageComponent {
     refreshData(force: boolean) {
         api.refreshTopics(force);
         api.refreshClusterOverview(force);
-
     }
 
     isFilterMatch(filter: string, item: Topic): boolean {
@@ -91,58 +118,44 @@ class TopicList extends PageComponent {
         if (!api.topics) return DefaultSkeleton;
 
         let topics = api.topics;
-        if (uiSettings.topicList.hideInternalTopics || isServerless()) {
+        if (uiSettings.topicList.hideInternalTopics) {
             topics = topics.filter(x => !x.isInternal && !x.topicName.startsWith('_'));
         }
 
-        const partitionCountReal = topics.sum((x) => x.partitionCount);
-        const partitionCountOnlyReplicated = topics.sum((x) => x.partitionCount * (x.replicationFactor - 1));
+        try {
+            const quickSearchRegExp = new RegExp(uiSettings.topicList.quickSearch.toLowerCase(), 'i')
 
-        const partitionDetails = QuickTable(
-            [
-                { key: 'Primary:', value: partitionCountReal },
-                { key: 'Replicated:', value: partitionCountOnlyReplicated },
-                { key: 'All:', value: partitionCountReal + partitionCountOnlyReplicated },
-            ],
-            {
-                keyAlign: 'right', keyStyle: { fontWeight: 500 },
-                gapWidth: 4,
-                valueAlign: 'right'
-            }
-        );
+            topics = topics.filter(x => {
+                return x.topicName.toLowerCase().match(quickSearchRegExp);
+            });
+        } catch (e) {
+            console.warn('Invalid expression')
+        }
+
+
+        const partitionCount = topics.sum((x) => x.partitionCount);
+        const replicaCount = topics.sum((x) => x.partitionCount * x.replicationFactor);
 
         return (
             <PageContent>
-                <Section py={4}>
+                <Section>
                     <Flex>
                         <Statistic title="Total topics" value={topics.length} />
-                        <Popover
-                            title="Partition Details"
-                            content={partitionDetails}
-                            placement="right"
-                            trigger="hover"
-                            size="stretch"
-                            hideCloseButton
-                        >
-                            <div
-                                className="hoverLink"
-                                style={{
-                                    display: 'flex',
-                                    verticalAlign: 'middle',
-                                    cursor: 'default',
-                                }}
-                            >
-                                <Statistic
-                                    title="Total partitions"
-                                    value={
-                                        partitionCountReal + partitionCountOnlyReplicated
-                                    }
-                                />
-                            </div>
-                        </Popover>
+                        <Statistic title="Total partitions" value={partitionCount} />
+                        <Statistic title="Total replicas" value={replicaCount} />
                     </Flex>
                 </Section>
 
+                <Box pt={6}>
+                    <SearchBar<Topic>
+                        placeholderText="Enter search term/regex"
+                        dataSource={() => topics || []}
+                        isFilterMatch={this.isFilterMatch}
+                        filterText={uiSettings.topicList.quickSearch}
+                        onQueryChanged={(filterText) => (uiSettings.topicList.quickSearch = filterText)}
+                        onFilteredDataChanged={data => this.filteredTopics = data}
+                    />
+                </Box>
                 <Section>
                     <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center' }}>
                         <Button
@@ -150,101 +163,25 @@ class TopicList extends PageComponent {
                             colorScheme="brand"
                             onClick={() => this.showCreateTopicModal()}
                             style={{ minWidth: '160px', marginBottom: '12px' }}
+                            data-testid="create-topic-button"
                         >
                             Create topic
                         </Button>
 
-                        {!isServerless() &&
-                            <Checkbox
-                                isChecked={!uiSettings.topicList.hideInternalTopics}
-                                onChange={x => uiSettings.topicList.hideInternalTopics = !x.target.checked}
-                                style={{ marginLeft: 'auto' }}>
-                                Show internal topics
-                            </Checkbox>
-                        }
+                        <Checkbox
+                            isChecked={!uiSettings.topicList.hideInternalTopics}
+                            onChange={x => uiSettings.topicList.hideInternalTopics = !x.target.checked}
+                            style={{ marginLeft: 'auto' }}>
+                            Show internal topics
+                        </Checkbox>
+
                         <this.CreateTopicModal />
                     </div>
-                    <KowlTable
-                        dataSource={topics}
-                        rowKey={(x) => x.topicName}
-                        columns={[
-                            {
-                                title: 'Name',
-                                dataIndex: 'topicName',
-                                render: (t, r) => renderName(r),
-                                sorter: sortField('topicName'),
-                                className: 'whiteSpaceDefault',
-                                defaultSortOrder: 'ascend',
-                            },
-                            {
-                                title: 'Partitions',
-                                dataIndex: 'partitions',
-                                render: (t, r) => r.partitionCount,
-                                sorter: (a, b) => a.partitionCount - b.partitionCount,
-                                width: 1,
-                            },
-                            {
-                                title: 'Replicas',
-                                dataIndex: 'replicationFactor',
-                                sorter: sortField('replicationFactor'),
-                                width: 1,
-                            },
-                            {
-                                title: 'CleanupPolicy',
-                                dataIndex: 'cleanupPolicy',
-                                width: 1,
-                                filterType: {
-                                    type: 'enum',
-                                    optionClassName: 'capitalize',
-                                },
-                                sorter: sortField('cleanupPolicy'),
-                            },
-                            {
-                                title: 'Size',
-                                render: (t, r) => renderLogDirSummary(r.logDirSummary),
-                                sorter: (a, b) =>
-                                    a.logDirSummary.totalSizeBytes -
-                                    b.logDirSummary.totalSizeBytes,
-                                width: '140px',
-                            },
-                            {
-                                width: 1,
-                                title: ' ',
-                                key: 'action',
-                                className: 'msgTableActionColumn',
-                                render: (text, record) => (
-                                    <div style={{ display: 'flex', gap: '4px' }}>
-                                        <DeleteDisabledTooltip topic={record}>
-                                            <Button
-                                                variant="ghost"
-                                                className="iconButton"
-                                                onClick={(event) => {
-                                                    event.stopPropagation();
-                                                    this.topicToDelete = record;
-                                                }}
-                                            >
-                                                <Icon as={HiOutlineTrash} fontSize="22px" />
-                                            </Button>
-                                        </DeleteDisabledTooltip>
-                                    </div>
-                                ),
-                            },
-                        ]}
-                        search={{
-                            searchColumnIndex: 0,
-                            isRowMatch: (row, regex) => {
-                                if (regex.test(row.topicName)) return true;
-                                if (regex.test(row.cleanupPolicy)) return true;
-                                return false;
-                            },
-                        }}
-                        observableSettings={uiSettings.topicList}
-                        onRow={(record) => ({
-                            onClick: () =>
-                                appGlobal.history.push(`/topics/${encodeURIComponent(record.topicName)}`),
-                        })}
-                        rowClassName="hoverLink"
-                    />
+                    <Box my={4}>
+                        <TopicsTable topics={topics} onDelete={(record) => {
+                            this.topicToDelete = record;
+                        }} />
+                    </Box>
                 </Section>
 
                 <ConfirmDeletionModal
@@ -260,6 +197,71 @@ class TopicList extends PageComponent {
     }
 }
 export default TopicList;
+
+const TopicsTable: FC<{ topics: Topic[], onDelete: (record: Topic) => void }> = ({ topics, onDelete }) => {
+    const paginationParams = usePaginationParams(uiSettings.topicList.pageSize, topics.length)
+
+    return (
+        <DataTable<Topic>
+            data={topics}
+            sorting={true}
+            pagination={paginationParams}
+            onPaginationChange={onPaginationChange(paginationParams, ({ pageSize, pageIndex}) => {
+                uiSettings.topicList.pageSize = pageSize
+                editQuery(query => {
+                    query['page'] = String(pageIndex)
+                    query['pageSize'] = String(pageSize)
+                })
+            })}
+            columns={[
+                {
+                    header: 'Name',
+                    accessorKey: 'topicName',
+                    cell: ({row: {original: topic}}) => <Box wordBreak="break-word" whiteSpace="break-spaces"><Link to={`/topics/${encodeURIComponent(topic.topicName)}`}>{renderName(topic)}</Link></Box>,
+                    size: Infinity,
+                },
+                {
+                    header: 'Partitions',
+                    accessorKey: 'partitions',
+                    enableResizing: true,
+                    cell: ({row: {original: topic}}) => topic.partitionCount,
+                },
+                {
+                    header: 'Replicas',
+                    accessorKey: 'replicationFactor',
+                },
+                {
+                    header: 'CleanupPolicy',
+                    accessorKey: 'cleanupPolicy',
+                },
+                {
+                    header: 'Size',
+                    accessorKey: 'logDirSummary.totalSizeBytes',
+                    cell: ({row: {original: topic}}) => renderLogDirSummary(topic.logDirSummary),
+                },
+                {
+                    id: 'action',
+                    header: '',
+                    cell: ({row: {original: record}}) => (
+                        <Flex gap={1}>
+                            <DeleteDisabledTooltip topic={record}>
+                                <button
+                                    data-testid={`delete-topic-button-${record.topicName}`}
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                        onDelete(record)
+                                    }}
+                                >
+                                    <Icon as={HiOutlineTrash} />
+                                </button>
+                            </DeleteDisabledTooltip>
+                        </Flex>
+                    ),
+                },
+            ]}
+        />
+    )
+}
 
 const iconAllowed = (
     <span style={{ color: 'green' }}>
@@ -313,12 +315,14 @@ const renderName = (topic: Topic) => {
     );
 
     return (
-        <Popover content={popoverContent} placement="right" closeDelay={10} size="stretch" hideCloseButton>
+        <Box wordBreak="break-word" whiteSpace="break-spaces">
+            <Popover content={popoverContent} placement="right" closeDelay={10} size="stretch" hideCloseButton>
             <span>
                 {topic.topicName}
                 {iconClosedEye}
             </span>
-        </Popover>
+            </Popover>
+        </Box>
     );
 };
 
@@ -381,7 +385,9 @@ function ConfirmDeletionModal({ topicToDelete, onFinish, onCancel }: { topicToDe
                         <Button ref={cancelRef} onClick={cancel} variant="ghost">
                             Cancel
                         </Button>
-                        <Button isLoading={deletionPending} colorScheme="brand" onClick={() => {
+                        <Button
+                            data-testid="delete-topic-confirm-button"
+                            isLoading={deletionPending} colorScheme="brand" onClick={() => {
                             setDeletionPending(true);
                             api.deleteTopic(topicToDelete!.topicName) // modal is not shown when topic is null
                                 .then(finish)
@@ -479,7 +485,7 @@ function makeCreateTopicModal(parent: TopicList) {
     return createAutoModal<void, CreateTopicModalState>({
         modalProps: {
             title: 'Create Topic',
-            style: { width: '80%', minWidth: '600px', maxWidth: '1000px', top: '50px' },
+            style: { width: '80%', minWidth: '600px', maxWidth: '1000px', top: '50px', paddingTop: '10px', paddingBottom: '10px' },
 
             okText: 'Create',
             successTitle: 'Topic created!',
@@ -551,18 +557,31 @@ function makeCreateTopicModal(parent: TopicList) {
                 configs: config.filter(x => x.name.length > 0),
             });
 
-            return <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'auto auto',
-                justifyContent: 'center',
-                justifyItems: 'end',
-                columnGap: '8px',
-                rowGap: '4px'
-            }}>
-                <span>Name:</span><span style={{ justifySelf: 'start' }}>{result.topicName}</span>
-                <span>Partitions:</span><span style={{ justifySelf: 'start' }}>{String(result.partitionCount).replace('-1', '(Default)')}</span>
-                <span>Replication Factor:</span><span style={{ justifySelf: 'start' }}>{String(result.replicationFactor).replace('-1', '(Default)')}</span>
-            </div>
+            return (
+                <Grid
+                    templateColumns="auto auto"
+                    justifyContent="center"
+                    alignItems="center"
+                    justifyItems="end"
+                    columnGap={2}
+                    rowGap={1}
+                    py={2}
+                >
+                    <Text>Name:</Text>
+                    <Flex justifySelf="start" gap={2} alignItems="center">
+                        <Text wordBreak="break-word" whiteSpace="break-spaces" noOfLines={1}>{result.topicName}</Text>
+                        <CopyButton content={result.topicName} variant="ghost"/>
+                    </Flex>
+                    <Text>Partitions:</Text>
+                    <Text justifySelf="start">
+                        {String(result.partitionCount).replace('-1', '(Default)')}
+                    </Text>
+                    <Text>Replication Factor:</Text>
+                    <Text justifySelf="start">
+                        {String(result.replicationFactor).replace('-1', '(Default)')}
+                    </Text>
+                </Grid>
+            )
         },
         onSuccess: (_state, _result) => {
             parent.refreshData(true);

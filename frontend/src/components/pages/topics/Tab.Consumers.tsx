@@ -9,62 +9,54 @@
  * by the Apache License, Version 2.0
  */
 
-import React, { Component } from 'react';
-import { Topic } from '../../../state/restInterfaces';
-import {
-    Table,
-    Skeleton,
-    ConfigProvider
-} from 'antd';
+import React, { FC } from 'react';
+import { Topic, TopicConsumer } from '../../../state/restInterfaces';
 import { observer } from 'mobx-react';
 
 import '../../../utils/arrayExtensions';
 
 import { api } from '../../../state/backendApi';
 import { appGlobal } from '../../../state/appGlobal';
-import { sortField, makePaginationConfig } from '../../misc/common';
+import { DataTable } from '@redpanda-data/ui';
+import { DefaultSkeleton } from '../../../utils/tsxUtils';
+import usePaginationParams from '../../../hooks/usePaginationParams';
 import { uiState } from '../../../state/uiState';
+import { onPaginationChange } from '../../../utils/pagination';
+import { editQuery } from '../../../utils/queryHelper';
 
-@observer
-export class TopicConsumers extends Component<{ topic: Topic }> {
+type TopicConsumersProps = { topic: Topic };
 
-    pageConfig = makePaginationConfig(20);
-
-    render() {
-        let consumers = api.topicConsumers.get(this.props.topic.topicName);
-        const isLoading = consumers == null;
-        if (!consumers) consumers = [];
-
-        return <div>
-            <ConfigProvider renderEmpty={isLoading ? renderEmpty : undefined}>
-                <Table
-                    style={{ margin: '0', padding: '0' }} size="middle"
-                    showSorterTooltip={false}
-                    onRow={(record) =>
-                    ({
-                        onClick: () => appGlobal.history.push(`/groups/${encodeURIComponent(record.groupId)}`),
-                    })}
-                    pagination={this.pageConfig}
-                    onChange={(pagination) => {
-                        if (pagination.pageSize) uiState.topicSettings.consumerPageSize = pagination.pageSize;
-                        this.pageConfig.current = pagination.current;
-                        this.pageConfig.pageSize = pagination.pageSize;
-                    }}
-                    rowClassName={() => 'hoverLink'}
-                    dataSource={consumers}
-                    rowKey={x => x.groupId}
-                    columns={[
-                        { width: 1, title: 'Group', dataIndex: 'groupId', sorter: sortField('groupId'), defaultSortOrder: 'ascend' },
-                        { title: 'Lag', dataIndex: 'summedLag', sorter: sortField('summedLag') },
-                    ]} />
-            </ConfigProvider>
-        </div>
+export const TopicConsumers: FC<TopicConsumersProps> = observer(({ topic }) => {
+    let consumers = api.topicConsumers.get(topic.topicName);
+    const isLoading = consumers === null;
+    if(isLoading) {
+        return DefaultSkeleton;
     }
-}
+    if (!consumers) {
+        consumers = [];
+    }
 
-const renderEmpty = () => {
-    const defaultSkeletonStyle = { margin: '.5em 0' };
-    return <div style={defaultSkeletonStyle}>
-        <Skeleton loading={true} active={true} paragraph={{ rows: 2, width: '100%' }} />
-    </div>
-}
+    const paginationParams = usePaginationParams(uiState.topicSettings.consumerPageSize, consumers.length);
+
+    return (
+        <DataTable<TopicConsumer>
+            data={consumers}
+            pagination={paginationParams}
+            onPaginationChange={onPaginationChange(paginationParams, ({pageSize, pageIndex}) => {
+                uiState.topicSettings.consumerPageSize = pageSize;
+                editQuery(query => {
+                    query['page'] = String(pageIndex);
+                    query['pageSize'] = String(pageSize);
+                });
+            })}
+            sorting
+            columns={[
+                {size: 1, header: 'Group', accessorKey: 'groupId'},
+                {header: 'Lag', accessorKey: 'summedLag'},
+            ]}
+            onRow={row => {
+                appGlobal.history.push(`/groups/${encodeURIComponent(row.original.groupId)}`)
+            }}
+        />
+    );
+});

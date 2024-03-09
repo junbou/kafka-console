@@ -14,7 +14,7 @@ import { computed, makeObservable } from 'mobx';
 import { observer } from 'mobx-react';
 import React, { Component } from 'react';
 import { DragDropContext, Draggable, DraggableProvided, Droppable, DropResult, ResponderProvided } from 'react-beautiful-dnd';
-import { api } from '../../../../state/backendApi';
+import { MessageSearch } from '../../../../state/backendApi';
 import { PreviewTagV2 } from '../../../../state/ui';
 import { uiState } from '../../../../state/uiState';
 import { IsDev } from '../../../../utils/env';
@@ -22,16 +22,50 @@ import { Code, Label, OptionGroup, toSafeString } from '../../../../utils/tsxUti
 import { CollectedProperty, collectElements2, getAllMessageKeys, randomId } from '../../../../utils/utils';
 import globExampleImg from '../../../../assets/globExample.png';
 import { GearIcon, InfoIcon, ThreeBarsIcon, XIcon } from '@primer/octicons-react';
-import { Box, Button, Checkbox, Flex,
-    Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, ModalOverlay, Popover } from '@redpanda-data/ui';
+import { Box, Button, Checkbox, Drawer, DrawerBody, DrawerCloseButton, DrawerContent, DrawerFooter, DrawerHeader, DrawerOverlay, Flex, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, ModalOverlay, Popover, useDisclosure } from '@redpanda-data/ui';
 import { SingleSelect } from '../../../misc/Select';
+
+const PatternHelpDrawer = () => {
+    const { isOpen, onOpen, onClose } = useDisclosure()
+
+    return (
+        <>
+            <button onClick={onOpen} style={{
+                margin: '0 2px',
+                color: 'hsl(205deg, 100%, 50%)',
+                textDecoration: 'underline dotted'
+            }}><InfoIcon size={15} />&nbsp;glob patterns</button>
+            <Drawer
+                isOpen={isOpen}
+                placement="right"
+                size="xl"
+                onClose={onClose}
+            >
+                <DrawerOverlay />
+                <DrawerContent>
+                    <DrawerCloseButton />
+                    <DrawerHeader>Glob Pattern Examples</DrawerHeader>
+
+                    <DrawerBody>
+                        {globHelp}
+                    </DrawerBody>
+
+                    <DrawerFooter>
+                        <Button variant="outline" mr={3} onClick={onClose}>
+                            Close
+                        </Button>
+                    </DrawerFooter>
+                </DrawerContent>
+            </Drawer>
+        </>
+    )
+}
 
 
 const globHelp = <div>
     {/* Examples + Image */}
-    <div style={{ display: 'flex', gap: '2em', minWidth: '900px' }}>
-        <div style={{ flexGrow: 1 }}>
-            <h3>Glob Pattern Examples</h3>
+    <Flex gap={2}>
+        <Flex grow={1}>
             <div className="globHelpGrid">
                 <div className="h">Pattern</div>
                 <div className="h">Result</div>
@@ -84,12 +118,12 @@ const globHelp = <div>
                 <div className="rowSeparator" />
 
             </div>
-        </div>
+        </Flex>
         <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
             <div style={{ opacity: 0.5, fontSize: 'smaller', textAlign: 'center' }}>Example Data</div>
             <img src={globExampleImg} alt="Examples for glob patterns" />
         </div>
-    </div>
+    </Flex>
 
     {/* Details */}
     <div>
@@ -107,11 +141,15 @@ const globHelp = <div>
 </div>;
 
 @observer
-export class PreviewSettings extends Component<{ getShowDialog: () => boolean, setShowDialog: (show: boolean) => void }> {
+export class PreviewSettings extends Component<{
+    messageSearch: MessageSearch,
+    getShowDialog: () => boolean,
+    setShowDialog: (show: boolean) => void
+}> {
     @computed.struct get allCurrentKeys() {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const unused = api.messages.length;
-        return getAllMessageKeys(api.messages).map(p => p.propertyName).distinct();
+        const unused = this.props.messageSearch.messages.length;
+        return getAllMessageKeys(this.props.messageSearch.messages).map(p => p.propertyName).distinct();
     }
 
     constructor(p: any) {
@@ -143,12 +181,8 @@ export class PreviewSettings extends Component<{ getShowDialog: () => boolean, s
             <div>
                 <span >
                     When viewing large messages we're often only interested in a few specific fields.
-                    Add <Popover trigger={'click'} placement="bottom" content={globHelp} size="auto" hideCloseButton>
-                        <span style={{
-                            margin: '0 2px',
-                            color: 'hsl(205deg, 100%, 50%)',
-                            textDecoration: 'underline dotted', cursor: 'pointer'
-                        }}><InfoIcon size={15}/>&nbsp;glob patterns</span>
+                    Add <PatternHelpDrawer /><Popover trigger={'click'} placement="bottom" content={globHelp} size="auto" hideCloseButton>
+
                     </Popover> to this list to show found values as previews.
                 </span>
             </div>
@@ -169,7 +203,7 @@ export class PreviewSettings extends Component<{ getShowDialog: () => boolean, s
                                                 {...draggableProvided.draggableProps}
                                             >
                                                 <PreviewTagSettings tag={tag} index={index}
-                                                                    draggableProvided={draggableProvided}
+                                                    draggableProvided={draggableProvided}
                                                     onRemove={() => tags.removeAll(t => t.id == tag.id)}
                                                     allCurrentKeys={currentKeys}
                                                 />
@@ -202,8 +236,7 @@ export class PreviewSettings extends Component<{ getShowDialog: () => boolean, s
                 <div className="previewTagsSettings" >
                     <OptionGroup<'caseSensitive' | 'ignoreCase'>
                         label="Matching"
-                        options={{'Ignore Case': 'ignoreCase', 'Case Sensitive': 'caseSensitive'}}
-                        size="small"
+                        options={{ 'Ignore Case': 'ignoreCase', 'Case Sensitive': 'caseSensitive' }}
                         value={uiState.topicSettings.previewTagsCaseSensitive}
                         onChange={e => uiState.topicSettings.previewTagsCaseSensitive = e}
                     />
@@ -291,12 +324,13 @@ class PreviewTagSettings extends Component<{ tag: PreviewTagV2, index: number, o
 
             <Box w="full">
                 <SingleSelect<string>
+                    creatable
                     placeholder="Pattern..."
                     value={tag.pattern}
                     onChange={(value) => {
                         tag.pattern = value
                     }}
-                    options={allCurrentKeys.map(t => ({label: t, value: t}))}
+                    options={allCurrentKeys.map(t => ({ label: t, value: t }))}
                 />
             </Box>
 

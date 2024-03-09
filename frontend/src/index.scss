@@ -446,6 +446,7 @@ td.ant-table-column-sort {
     padding: 0.1em 0.4em;
     padding-bottom: 0.05em;
     white-space: pre-wrap;
+    line-break: anywhere;
     font-size: 85%;
     font-family: monospace;
 
@@ -1530,10 +1531,6 @@ div.ant-collapse.ant-collapse-borderless>div>div>span {
     background-color: rgba(255, 187, 0, 0.185);
 }
 
-.pageTitle {
-    /* background: rgba(255, 0, 0, 0.089); */
-}
-
 .ant-breadcrumb {
     /* don't allow wrapping */
     white-space: nowrap;
@@ -2486,25 +2483,7 @@ $easeInOutCirc: cubic-bezier(0.785, 0.135, 0.150, 0.860);
 
     }
 
-    .ant-table-wrapper {
-        .ant-pagination {
-            // curent antd has a bug: pagination position 'none' has no effect, so we fix it in css
-            display: none;
-        }
-    }
-
-
 }
-
-.ant-table.ant-table-small .ant-table-title,
-.ant-table.ant-table-small .ant-table-footer,
-.ant-table.ant-table-small .ant-table-thead>tr>th,
-.ant-table.ant-table-small .ant-table-tbody>tr>td,
-.ant-table.ant-table-small tfoot>tr>th,
-.ant-table.ant-table-small tfoot>tr>td {
-    // color: red;
-}
-
 
 // when a some container containing a radio button is animated,
 // it sometimes causes the inner part (the "dot") of a radio button to become misaligned
@@ -2773,8 +2752,6 @@ $easeInOutCirc: cubic-bezier(0.785, 0.135, 0.150, 0.860);
     padding: .5em;
     border-radius: 4px;
     background: rgba(200, 205, 210, 0.16);
-
-    max-height: 300px;
 
     .moveHandle {
         display: inline-flex;

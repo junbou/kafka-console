@@ -36,10 +36,10 @@ func TestService_GetAvroSchemaByID(t *testing.T) {
 	// Parent schema with reference to another schema
 	schemaStr := "{\"type\": \"record\", \"name\": \"parent.schema\", \"fields\": [{\"name\": \"reference\", \"type\": \"referenced.schema\"}]}"
 	httpmock.RegisterResponder("GET", baseURL+"/schemas/ids/1000",
-		func(req *http.Request) (*http.Response, error) {
-			return httpmock.NewJsonResponse(http.StatusOK, map[string]interface{}{
+		func(*http.Request) (*http.Response, error) {
+			return httpmock.NewJsonResponse(http.StatusOK, map[string]any{
 				"schema": schemaStr,
-				"references": []map[string]interface{}{{
+				"references": []map[string]any{{
 					"name":    "referenced.schema",
 					"subject": "referenced.schema",
 					"version": 1,
@@ -51,8 +51,8 @@ func TestService_GetAvroSchemaByID(t *testing.T) {
 	// Simple referenced subject to resolve
 	referencedSchemaStr := "{\"type\": \"enum\", \"name\": \"referenced.schema\", \"symbols\": [\"FOO\"]}"
 	httpmock.RegisterResponder("GET", baseURL+"/subjects/referenced.schema/versions/1",
-		func(req *http.Request) (*http.Response, error) {
-			return httpmock.NewJsonResponse(http.StatusOK, map[string]interface{}{
+		func(*http.Request) (*http.Response, error) {
+			return httpmock.NewJsonResponse(http.StatusOK, map[string]any{
 				"schema":     referencedSchemaStr,
 				"subject":    "referenced.schema",
 				"version":    1,

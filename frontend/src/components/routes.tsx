@@ -10,8 +10,7 @@
  */
 
 import React from 'react';
-import { Tooltip } from 'antd';
-import { Switch, useHistory } from 'react-router-dom';
+import { Switch } from 'react-router-dom';
 import { Section } from './misc/common';
 import { Route, Redirect } from 'react-router';
 import { PageComponentType, PageProps } from './pages/Page';
@@ -35,13 +34,13 @@ import KafkaClusterDetails from './pages/connect/Cluster.Details';
 import CreateConnector from './pages/connect/CreateConnector';
 import QuotasList from './pages/quotas/Quotas.List';
 import { AppFeature, AppFeatures } from '../utils/env';
-import { ItemType } from 'antd/lib/menu/hooks/useItems';
 import { AnimatePresence } from '../utils/animationProps';
 import { NavLinkProps } from '@redpanda-data/ui/dist/components/Nav/NavLink';
 import Overview from './pages/overview/Overview';
 import { BrokerDetails } from './pages/overview/Broker.Details';
 import EditSchemaCompatibilityPage from './pages/schemas/EditCompatibility';
 import { SchemaCreatePage, SchemaAddVersionPage } from './pages/schemas/Schema.Create';
+import { TopicProducePage } from './pages/topics/Topic.Produce';
 
 //
 //	Route Types
@@ -60,49 +59,6 @@ export interface PageDefinition<TRouteParams = {}> {
 
 
 // Generate content for <Menu> from all routes
-export function CreateRouteMenuItems(entries: IRouteEntry[]): ItemType[] {
-    const history = useHistory();
-    const routeItems = entries.map((entry) => {
-        // Menu entry for Page
-        if (entry.path.includes(':'))
-            return null; // only root-routes (no param) can be in menu
-
-        let isEnabled = true;
-        let disabledText: JSX.Element = <></>;
-        if (entry.visibilityCheck) {
-            const visibility = entry.visibilityCheck();
-            if (!visibility.visible) return null;
-
-            isEnabled = visibility.disabledReasons.length == 0;
-            if (!isEnabled)
-                disabledText = disabledReasonText[visibility.disabledReasons[0]];
-        }
-        const isDisabled = !isEnabled;
-
-        const Icon = entry.icon as unknown as typeof React.Component;
-        return {
-            key: entry.path,
-            icon: entry.icon && <span className="menuIcon anticon"><Icon /></span>,
-            onClick: () => { history.push(entry.path)},
-            label: (
-                <Tooltip
-                    overlayClassName="menu-permission-tooltip"
-                    overlay={disabledText}
-                    align={{ points: ['cc', 'cc'], offset: [-20, 0] }}
-                    trigger={isDisabled ? 'hover' : 'none'}
-                    mouseEnterDelay={0.05}
-                >
-                    <span style={{ display: isDisabled ? 'block' : 'contents', width: '100%' }}>
-                        {entry.title}
-                    </span>
-                </Tooltip>
-            ),
-            disabled: isDisabled,
-        } as ItemType;
-    }).filter(x => x != null && x != undefined);
-    return routeItems as ItemType[];
-}
-
 export function createVisibleSidebarItems(entries: IRouteEntry[]): NavLinkProps[] {
     return entries.map((entry) => {
         // Menu entry for Page
@@ -273,6 +229,7 @@ export const APP_ROUTES: IRouteEntry[] = [
 
     MakeRoute<{}>('/topics', TopicList, 'Topics', CollectionIcon),
     MakeRoute<{ topicName: string }>('/topics/:topicName', TopicDetails, 'Topics'),
+    MakeRoute<{ topicName: string }>('/topics/:topicName/produce-record', TopicProducePage, 'Produce Record'),
 
     MakeRoute<{}>('/schema-registry', SchemaList, 'Schema Registry', CubeTransparentIcon),
     MakeRoute<{}>('/schema-registry/create', SchemaCreatePage, 'Create schema'),

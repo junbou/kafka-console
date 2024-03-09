@@ -18,7 +18,7 @@ import fetchWithTimeout from '../utils/fetchWithTimeout';
 import { toJson } from '../utils/jsonUtils';
 import { LazyMap } from '../utils/LazyMap';
 import { ObjToKv } from '../utils/tsxUtils';
-import { base64ToHexString, decodeBase64, TimeSince } from '../utils/utils';
+import { decodeBase64, TimeSince } from '../utils/utils';
 import { appGlobal } from './appGlobal';
 import {
     GetAclsRequest, AclRequestDefault, GetAclOverviewResponse, AdminInfo,
@@ -40,11 +40,12 @@ import {
     PatchConfigsRequest, PatchConfigsResponse, ProduceRecordsResponse,
     PublishRecordsRequest, QuotaResponse, ResourceConfig,
     Topic, TopicConfigResponse, TopicConsumer, TopicDescription,
-    TopicDocumentation, TopicDocumentationResponse, TopicMessage, TopicOffset,
+    TopicDocumentation, TopicDocumentationResponse, TopicOffset,
     TopicPermissions, UserData, WrappedApiError, CreateACLRequest,
     DeleteACLsRequest, RedpandaLicense, AclResource, GetUsersResponse, CreateUserRequest,
     PatchTopicConfigsRequest, CreateSecretResponse, ClusterOverview, BrokerWithConfigAndStorage,
     OverviewNewsEntry,
+    Payload,
     SchemaRegistrySubject,
     SchemaRegistrySubjectDetails,
     SchemaRegistryModeResponse,
@@ -58,11 +59,19 @@ import {
     SchemaRegistrySetCompatibilityModeRequest,
     SchemaReferencedByEntry,
     SchemaRegistryValidateSchemaResponse,
-    SchemaVersion
+    SchemaVersion,
+    TopicMessage,
+    CompressionType
 } from './restInterfaces';
 import { uiState } from './uiState';
 import { config as appConfig, isEmbedded } from '../config';
 import { createStandaloneToast, redpandaTheme, redpandaToastOptions } from '@redpanda-data/ui';
+
+import { proto3 } from '@bufbuild/protobuf';
+import { ListMessagesRequest } from '../protogen/redpanda/api/console/v1alpha1/list_messages_pb';
+import { PayloadEncoding, CompressionType as ProtoCompressionType } from '../protogen/redpanda/api/console/v1alpha1/common_pb';
+import { PublishMessageRequest, PublishMessageResponse } from '../protogen/redpanda/api/console/v1alpha1/publish_messages_pb';
+import { PartitionOffsetOrigin } from './ui';
 
 const REST_TIMEOUT_SEC = 25;
 export const REST_CACHE_DURATION_SEC = 20;
@@ -227,8 +236,6 @@ function cachedApiRequest<T>(url: string, force: boolean = false): Promise<T> {
 }
 
 
-let currentWS: WebSocket | null = null;
-
 //
 // BackendAPI
 //
@@ -321,127 +328,6 @@ const apiStore = {
 
     // Fetch errors
     errors: [] as any[],
-
-    messageSearchPhase: null as string | null,
-    messagesFor: '', // for what topic?
-    messages: observable([] as TopicMessage[], { deep: false }),
-    messagesElapsedMs: null as null | number,
-    messagesBytesConsumed: 0,
-    messagesTotalConsumed: 0,
-
-
-    async startMessageSearch(_searchRequest: MessageSearchRequest): Promise<void> {
-        const searchRequest = {
-            ..._searchRequest, ...(appConfig.jwt ? {
-                enterprise: {
-                    redpandaCloud: {
-                        accessToken: appConfig.jwt
-                    }
-                }
-            } : {})
-        }
-        const url = `${appConfig.websocketBasePath}/topics/${encodeURIComponent(searchRequest.topicName)}/messages`;
-
-        console.debug('connecting to "' + url + '"');
-
-        // Abort previous connection
-        if (currentWS != null)
-            if (currentWS.readyState == WebSocket.OPEN || currentWS.readyState == WebSocket.CONNECTING)
-                currentWS.close();
-
-        currentWS = new WebSocket(url);
-        const ws = currentWS;
-        this.messageSearchPhase = 'Connecting';
-        this.messagesBytesConsumed = 0;
-        this.messagesTotalConsumed = 0;
-
-        currentWS.onopen = _ev => {
-            if (ws !== currentWS) return; // newer request has taken over
-            // reset state for new request
-            this.messagesFor = searchRequest.topicName;
-            this.messages.length = 0;
-            this.messagesElapsedMs = null;
-            // send new request
-            currentWS.send(JSON.stringify(searchRequest));
-        };
-        currentWS.onclose = ev => {
-            if (ws !== currentWS) return;
-            api.stopMessageSearch();
-            // double assignment makes sense: when the phase changes to null, some observing components will play a "fade out" animation, using the last (non-null) value
-            console.debug(`ws closed: code=${ev.code} wasClean=${ev.wasClean}` + (ev.reason ? ` reason=${ev.reason}` : ''));
-        };
-
-        const onMessageHandler = (msgEvent: MessageEvent) => {
-            if (ws !== currentWS) return;
-            const msg = JSON.parse(msgEvent.data);
-
-            switch (msg.type) {
-                case 'phase':
-                    this.messageSearchPhase = msg.phase;
-                    break;
-
-                case 'progressUpdate':
-                    this.messagesBytesConsumed = msg.bytesConsumed;
-                    this.messagesTotalConsumed = msg.messagesConsumed;
-                    break;
-
-                case 'done':
-                    this.messagesElapsedMs = msg.elapsedMs;
-                    this.messagesBytesConsumed = msg.bytesConsumed;
-                    // this.MessageSearchCancelled = msg.isCancelled;
-                    this.messageSearchPhase = 'Done';
-                    this.messageSearchPhase = null;
-                    break;
-
-                case 'error':
-                    // error doesn't neccesarily mean the whole request is done
-                    console.info('ws backend error: ' + msg.message);
-                    toast({
-                        title: 'Backend Error',
-                        description: msg.message,
-                        status: 'error'
-                    });
-
-                    break;
-
-                case 'message':
-                    const m = msg.message as TopicMessage;
-
-                    if (m.key.encoding == 'binary' || m.key.encoding == 'utf8WithControlChars') {
-                        m.keyBinHexPreview = base64ToHexString(m.key.payload);
-                        m.key.payload = decodeBase64(m.key.payload);
-                    }
-
-                    if (m.value.encoding == 'binary' || m.value.encoding == 'utf8WithControlChars') {
-                        m.valueBinHexPreview = base64ToHexString(m.value.payload);
-                        m.value.payload = decodeBase64(m.value.payload);
-                    }
-
-                    m.keyJson = JSON.stringify(m.key.payload);
-                    m.valueJson = JSON.stringify(m.value.payload);
-
-                    this.messages.push(m);
-                    break;
-            }
-        };
-        currentWS.onmessage = onMessageHandler;
-    },
-
-
-
-    stopMessageSearch() {
-        if (currentWS) {
-            currentWS.close();
-            currentWS = null;
-        }
-
-        if (this.messageSearchPhase != null) {
-            this.messageSearchPhase = 'Done';
-            this.messagesBytesConsumed = 0;
-            this.messagesTotalConsumed = 0;
-            this.messageSearchPhase = null;
-        }
-    },
 
     refreshTopics(force?: boolean) {
         cachedApiRequest<GetTopicsResponse>(`${appConfig.restBasePath}/topics`, force)
@@ -952,7 +838,10 @@ const apiStore = {
                     this.schemaMode = r.mode;
                 }
             })
-            .catch(addError);
+            .catch((err) => {
+                this.schemaMode = 'Unknown'
+                console.warn('failed to request schema mode', err)
+            });
     },
 
     refreshSchemaCompatibilityConfig(force?: boolean) {
@@ -1473,6 +1362,19 @@ const apiStore = {
         return parseOrUnwrap<ProduceRecordsResponse>(response, null);
     },
 
+    // New version of "publishRecords"
+    async publishMessage(request: PublishMessageRequest): Promise<PublishMessageResponse> {
+
+        const client = appConfig.consoleClient!;
+        if (!client) {
+            // this shouldn't happen but better to explicitly throw
+            throw new Error('Console client is not initialized');
+        }
+        const r = await client.publishMessage(request);
+
+        return r;
+    },
+
     async createTopic(request: CreateTopicRequest): Promise<CreateTopicResponse> {
         // POST "/topics"
         const response = await appConfig.fetch(`${appConfig.restBasePath}/topics`, {
@@ -1574,6 +1476,338 @@ const apiStore = {
     },
 
 };
+
+export function createMessageSearch() {
+    const messageSearch = {
+        // Parameters last passed to 'startMessageSearch'
+        searchRequest: null as MessageSearchRequest | null,
+
+        // Some statistics that might be interesting to show in the UI
+        searchPhase: null as string | null, // A search has different phases, like "waiting for mssages", or "creating consumers", this string is directly reported by the backend
+        elapsedMs: null as null | number, // Reported by the backend, only set once the search is done
+        bytesConsumed: 0,
+        totalMessagesConsumed: 0,
+
+        // Call 'stopSearch' instead of using this directly
+        abortController: null as AbortController | null,
+
+        // Live view of messages, gets updated as new messages arrive
+        messages: observable([] as TopicMessage[], { deep: false }),
+
+
+        async startSearch(_searchRequest: MessageSearchRequest): Promise<TopicMessage[]> {
+            // https://connectrpc.com/docs/web/using-clients
+            // https://github.com/connectrpc/connect-es
+            // https://github.com/connectrpc/examples-es
+            const client = appConfig.consoleClient;
+
+            if (!client) {
+                // this shouldn't happen but better to explicitly throw
+                throw new Error('No console client configured');
+            }
+
+            if (this.searchPhase) {
+                // There is a search running already, abort it
+                this.stopSearch('starting a new search');
+            }
+
+            const searchRequest = {
+                ..._searchRequest, ...(appConfig.jwt ? {
+                    enterprise: {
+                        redpandaCloud: {
+                            accessToken: appConfig.jwt
+                        }
+                    }
+                } : {})
+            }
+            this.searchRequest = searchRequest;
+            this.searchPhase = 'Connecting';
+            this.bytesConsumed = 0;
+            this.totalMessagesConsumed = 0;
+            this.messages.length = 0;
+            this.elapsedMs = null;
+
+            const messageSearchAbortController = this.abortController = new AbortController();
+
+            // do it
+            const req = new ListMessagesRequest();
+            req.topic = searchRequest.topicName;
+            req.startOffset = BigInt(searchRequest.startOffset);
+            req.startTimestamp = BigInt(searchRequest.startTimestamp);
+            req.partitionId = searchRequest.partitionId;
+            req.maxResults = searchRequest.maxResults;
+            req.filterInterpreterCode = searchRequest.filterInterpreterCode;
+            req.includeOriginalRawPayload = searchRequest.includeRawPayload ?? false;
+            req.ignoreMaxSizeLimit = searchRequest.ignoreSizeLimit ?? false;
+            req.keyDeserializer = searchRequest.keyDeserializer;
+            req.valueDeserializer = searchRequest.valueDeserializer;
+
+            // For StartOffset = Newest and any set push-down filter we need to bump the default timeout
+            // from 30s to 30 minutes before ending the request gracefully.
+            let timeoutMs = 30 * 1000;
+            if (searchRequest.startOffset == PartitionOffsetOrigin.End || req.filterInterpreterCode != null) {
+                const minuteMs = 60 * 1000;
+                timeoutMs = 30 * minuteMs;
+            }
+
+            try {
+                for await (const res of client.listMessages(req, { signal: messageSearchAbortController.signal, timeoutMs })) {
+                    if (messageSearchAbortController.signal.aborted)
+                        break;
+
+                    try {
+                        switch (res.controlMessage.case) {
+                            case 'phase':
+                                console.log('phase: ' + res.controlMessage.value.phase)
+                                this.searchPhase = res.controlMessage.value.phase;
+                                break;
+                            case 'progress':
+                                console.log('progress: ' + res.controlMessage.value.messagesConsumed)
+                                this.bytesConsumed = Number(res.controlMessage.value.bytesConsumed);
+                                this.totalMessagesConsumed = Number(res.controlMessage.value.messagesConsumed);
+                                break;
+                            case 'done':
+                                this.elapsedMs = Number(res.controlMessage.value.elapsedMs);
+                                this.bytesConsumed = Number(res.controlMessage.value.bytesConsumed);
+                                // this.MessageSearchCancelled = msg.isCancelled;
+                                this.searchPhase = 'Done';
+                                this.searchPhase = null;
+                                break;
+                            case 'error':
+                                // error doesn't necessarily mean the whole request is done
+                                console.info('ws backend error: ' + res.controlMessage.value.message);
+                                toast({
+                                    title: 'Backend Error',
+                                    description: res.controlMessage.value.message,
+                                    status: 'error'
+                                });
+
+                                break;
+                            case 'data':
+                                // TODO I would guess we should replace the rest interface types and just utilize the generated Connect types
+                                // this is my hacky way of attempting to get things working by converting the Connect types
+                                // to the rest interface types that are hooked up to other things
+
+                                const m = {} as TopicMessage;
+                                m.partitionID = res.controlMessage.value.partitionId
+
+                                m.compression = CompressionType.Unknown
+                                switch (res.controlMessage.value.compression) {
+                                    case ProtoCompressionType.UNCOMPRESSED:
+                                        m.compression = CompressionType.Uncompressed;
+                                        break;
+                                    case ProtoCompressionType.GZIP:
+                                        m.compression = CompressionType.GZip;
+                                        break;
+                                    case ProtoCompressionType.SNAPPY:
+                                        m.compression = CompressionType.Snappy;
+                                        break;
+                                    case ProtoCompressionType.LZ4:
+                                        m.compression = CompressionType.LZ4;
+                                        break;
+                                    case ProtoCompressionType.ZSTD:
+                                        m.compression = CompressionType.ZStd;
+                                        break;
+                                }
+
+                                m.offset = Number(res.controlMessage.value.offset)
+                                m.timestamp = Number(res.controlMessage.value.timestamp)
+                                m.isTransactional = res.controlMessage.value.isTransactional
+                                m.headers = [];
+                                res.controlMessage.value.headers.forEach(h => {
+                                    m.headers.push({
+                                        key: h.key,
+                                        value: {
+                                            payload: JSON.stringify(new TextDecoder().decode(h.value)),
+                                            encoding: 'text',
+                                            schemaId: 0,
+                                            size: h.value.length,
+                                            isPayloadNull: h.value == null,
+                                        }
+                                    })
+                                })
+
+                                // key
+                                const key = res.controlMessage.value.key;
+                                const keyPayload = new TextDecoder().decode(key?.normalizedPayload);
+
+                                m.key = {} as Payload;
+                                m.key.rawBytes = key?.originalPayload;
+
+                                switch (key?.encoding) {
+                                    case PayloadEncoding.NULL:
+                                        m.key.encoding = 'null';
+                                        break;
+                                    case PayloadEncoding.BINARY:
+                                        m.key.encoding = 'binary';
+                                        break;
+                                    case PayloadEncoding.XML:
+                                        m.key.encoding = 'xml';
+                                        break;
+                                    case PayloadEncoding.AVRO:
+                                        m.key.encoding = 'avro';
+                                        break;
+                                    case PayloadEncoding.JSON:
+                                        m.key.encoding = 'json';
+                                        break;
+                                    case PayloadEncoding.PROTOBUF:
+                                        m.key.encoding = 'protobuf';
+                                        break;
+                                    case PayloadEncoding.MESSAGE_PACK:
+                                        m.key.encoding = 'msgpack';
+                                        break;
+                                    case PayloadEncoding.TEXT:
+                                        m.key.encoding = 'text';
+                                        break;
+                                    case PayloadEncoding.UTF8:
+                                        m.key.encoding = 'utf8WithControlChars';
+                                        break;
+                                    case PayloadEncoding.UINT:
+                                        m.key.encoding = 'uint';
+                                        break;
+                                    case PayloadEncoding.SMILE:
+                                        m.key.encoding = 'smile';
+                                        break;
+                                    case PayloadEncoding.CONSUMER_OFFSETS:
+                                        m.key.encoding = 'consumerOffsets';
+                                        break;
+                                    default:
+                                        console.log('unhandled key encoding type', {
+                                            encoding: key?.encoding,
+                                            encodingName: key?.encoding != null ? proto3.getEnumType(PayloadEncoding).findNumber(key.encoding)?.localName : undefined,
+                                            message: res,
+                                        })
+                                }
+
+                                m.key.isPayloadNull = key?.encoding == PayloadEncoding.NULL;
+                                m.key.payload = keyPayload;
+                                m.key.normalizedPayload = key?.normalizedPayload;
+
+                                try {
+                                    m.key.payload = JSON.parse(keyPayload);
+                                } catch { }
+
+                                m.key.troubleshootReport = key?.troubleshootReport;
+                                m.key.schemaId = key?.schemaId ?? 0;
+                                m.keyJson = JSON.stringify(m.key.payload);
+                                m.key.size = Number(key?.payloadSize);
+                                m.key.isPayloadTooLarge = key?.isPayloadTooLarge;
+
+                                // console.log(m.keyJson)
+
+                                // value
+                                const val = res.controlMessage.value.value;
+                                const valuePayload = new TextDecoder().decode(val?.normalizedPayload);
+
+                                m.value = {} as Payload;
+                                m.value.payload = valuePayload;
+                                m.value.normalizedPayload = val?.normalizedPayload;
+                                m.value.rawBytes = val?.originalPayload;
+
+                                switch (val?.encoding) {
+                                    case PayloadEncoding.NULL:
+                                        m.value.encoding = 'null';
+                                        break;
+                                    case PayloadEncoding.BINARY:
+                                        m.value.encoding = 'binary';
+                                        break;
+                                    case PayloadEncoding.XML:
+                                        m.value.encoding = 'xml';
+                                        break;
+                                    case PayloadEncoding.AVRO:
+                                        m.value.encoding = 'avro';
+                                        break;
+                                    case PayloadEncoding.JSON:
+                                        m.value.encoding = 'json';
+                                        break;
+                                    case PayloadEncoding.PROTOBUF:
+                                        m.value.encoding = 'protobuf';
+                                        break;
+                                    case PayloadEncoding.MESSAGE_PACK:
+                                        m.value.encoding = 'msgpack';
+                                        break;
+                                    case PayloadEncoding.TEXT:
+                                        m.value.encoding = 'text';
+                                        break;
+                                    case PayloadEncoding.UTF8:
+                                        m.value.encoding = 'utf8WithControlChars';
+                                        break;
+                                    case PayloadEncoding.UINT:
+                                        m.value.encoding = 'uint';
+                                        break;
+                                    case PayloadEncoding.SMILE:
+                                        m.value.encoding = 'smile';
+                                        break;
+                                    case PayloadEncoding.CONSUMER_OFFSETS:
+                                        m.value.encoding = 'consumerOffsets';
+                                        break;
+                                    default:
+                                        console.log('unhandled value encoding type', {
+                                            encoding: val?.encoding,
+                                            encodingName: val?.encoding != null ? proto3.getEnumType(PayloadEncoding).findNumber(val.encoding)?.localName : undefined,
+                                            message: res,
+                                        })
+                                }
+
+                                m.value.schemaId = val?.schemaId ?? 0;
+                                m.value.troubleshootReport = val?.troubleshootReport;
+                                m.value.isPayloadNull = val?.encoding == PayloadEncoding.NULL;
+                                m.valueJson = valuePayload;
+                                m.value.isPayloadTooLarge = val?.isPayloadTooLarge;
+
+                                try {
+                                    m.value.payload = JSON.parse(valuePayload);
+                                } catch { }
+
+                                m.valueJson = JSON.stringify(m.value.payload);
+                                m.value.size = Number(val?.payloadSize);
+
+                                this.messages.push(m);
+                                break;
+                        }
+                    }
+                    catch (e) {
+                        console.error('error in listMessages loop', { error: e });
+                    }
+                }
+            } catch (e) {
+                this.abortController = null;
+                this.searchPhase = 'Done';
+                this.bytesConsumed = 0;
+                this.totalMessagesConsumed = 0;
+                this.searchPhase = null;
+                // https://connectrpc.com/docs/web/errors
+                if (messageSearchAbortController.signal.aborted) {
+                    // Do not throw, this is a user cancellation
+                } else {
+                    console.error('startMessageSearchNew: error in await loop of client.listMessages', { error: e });
+                    throw e;
+                }
+            }
+
+            // one done
+            this.stopSearch();
+            return this.messages;
+        },
+
+        stopSearch(reason?: string) {
+            if (this.abortController) {
+                this.abortController.abort(reason ?? 'aborted by user');
+                this.abortController = null;
+            }
+
+            if (this.searchPhase != null) {
+                this.searchPhase = 'Done';
+                this.bytesConsumed = 0;
+                this.totalMessagesConsumed = 0;
+                this.searchPhase = null;
+            }
+        },
+    };
+
+    return observable(messageSearch);
+}
+export type MessageSearch = ReturnType<typeof createMessageSearch>;
 
 function addFrontendFieldsForConnectCluster(cluster: ClusterConnectors) {
     const allowedActions = cluster.allowedActions ?? ['all'];
@@ -1704,6 +1938,7 @@ export async function partialTopicConfigs(configKeys: string[], topics?: string[
 export interface MessageSearchRequest {
     topicName: string,
     startOffset: number,
+    startTimestamp: number,
     partitionId: number,
     maxResults: number, // should also support '-1' soon, so we can do live tailing
     filterInterpreterCode: string, // js code, base64 encoded
@@ -1711,7 +1946,12 @@ export interface MessageSearchRequest {
         redpandaCloud?: {
             accessToken: string;
         }
-    }
+    },
+    includeRawPayload?: boolean;
+    ignoreSizeLimit?: boolean;
+
+    keyDeserializer?: PayloadEncoding;
+    valueDeserializer?: PayloadEncoding;
 }
 
 async function parseOrUnwrap<T>(response: Response, text: string | null): Promise<T> {
@@ -1744,4 +1984,4 @@ function addError(err: Error) {
 
 
 type apiStoreType = typeof apiStore;
-export const api = observable(apiStore, { messages: observable.shallow }) as apiStoreType;
+export const api = observable(apiStore) as apiStoreType;

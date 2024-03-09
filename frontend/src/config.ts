@@ -9,30 +9,29 @@
  * by the Apache License, Version 2.0
  */
 import { loader } from '@monaco-editor/react';
-import { ConfigProvider } from 'antd';
 import { autorun, configure, observable, when } from 'mobx';
-import colors from './colors';
-// import { embeddedAvailableRoutes } from './components/routes';
 import { api } from './state/backendApi';
 import { uiState } from './state/uiState';
-import { AppFeatures, getBasePath, IsDev } from './utils/env';
+import { AppFeatures, getBasePath } from './utils/env';
 import memoizeOne from 'memoize-one';
-import { DEFAULT_API_BASE, DEFAULT_HOST } from './components/constants';
+import { DEFAULT_API_BASE } from './components/constants';
 import { APP_ROUTES } from './components/routes';
+import { Interceptor as ConnectRpcInterceptor, StreamRequest, UnaryRequest, createPromiseClient, PromiseClient } from '@connectrpc/connect';
+import { createConnectTransport } from '@connectrpc/connect-web';
+import { ConsoleService } from './protogen/redpanda/api/console/v1alpha1/console_service_connect';
 
 declare const __webpack_public_path__: string;
 
-const getWebsocketBasePath = (overrideUrl?: string): string => {
-    if (overrideUrl) return overrideUrl;
-    const isHttps = window.location.protocol.startsWith('https');
-    const protocol = isHttps ? 'wss://' : 'ws://';
-    const host = IsDev ? DEFAULT_HOST : window.location.host;
-    return `${protocol + host + getBasePath()}/api`;
-};
-
 const getRestBasePath = (overrideUrl?: string) => overrideUrl ?? DEFAULT_API_BASE;
 
+const getGrpcBasePath = (overrideUrl?: string) => overrideUrl ?? getBasePath();
 
+
+const addBearerTokenInterceptor: ConnectRpcInterceptor = (next) => async (req: UnaryRequest | StreamRequest) => {
+    if (config.jwt)
+        req.header.append('Authorization', 'Bearer ' + config.jwt);
+    return await next(req);
+};
 
 export interface SetConfigArguments {
     fetch?: WindowOrWorkerGlobalScope['fetch'];
@@ -42,6 +41,7 @@ export interface SetConfigArguments {
         rest?: string;
         ws?: string;
         assets?: string;
+        grpc?: string;
     };
     setSidebarItems?: (items: SidebarItem[]) => void;
     setBreadcrumbs?: (items: Breadcrumb[]) => void;
@@ -61,8 +61,8 @@ export interface Breadcrumb {
 }
 
 interface Config {
-    websocketBasePath: string;
     restBasePath: string;
+    consoleClient?: PromiseClient<typeof ConsoleService>;
     fetch: WindowOrWorkerGlobalScope['fetch'];
     assetsPath: string;
     jwt?: string;
@@ -72,8 +72,10 @@ interface Config {
     isServerless: boolean;
 }
 
+// Config object is an mobx observable, always make sure you call it from
+// inside a componenet, don't be tempted to used it as singleton you might find
+// unexpected behaviour
 export const config: Config = observable({
-    websocketBasePath: getWebsocketBasePath(),
     restBasePath: getRestBasePath(),
     fetch: window.fetch,
     assetsPath: getBasePath(),
@@ -83,18 +85,25 @@ export const config: Config = observable({
     isServerless: false,
 });
 
-export const setConfig = ({ fetch, urlOverride, jwt, isServerless, ...args }: SetConfigArguments) => {
+const setConfig = ({ fetch, urlOverride, jwt, isServerless, ...args }: SetConfigArguments) => {
     const assetsUrl = urlOverride?.assets === 'WEBPACK' ? String(__webpack_public_path__).removeSuffix('/') : urlOverride?.assets;
+
+    // instantiate the client once, if we need to add more clients you can add them in here, ideally only one transport is necessary
+    const transport = createConnectTransport({
+        baseUrl: getGrpcBasePath(urlOverride?.grpc),
+        interceptors: [addBearerTokenInterceptor]
+    });
+
+    const grpcClient = createPromiseClient(ConsoleService, transport);
     Object.assign(config, {
         jwt,
         isServerless,
-        websocketBasePath: getWebsocketBasePath(urlOverride?.ws),
         restBasePath: getRestBasePath(urlOverride?.rest),
         fetch: fetch ?? window.fetch.bind(window),
         assetsPath: assetsUrl ?? getBasePath(),
+        consoleClient: grpcClient,
         ...args,
     });
-
     return config;
 };
 
@@ -177,20 +186,6 @@ export const setup = memoizeOne((setupArgs: SetConfigArguments) => {
 
     // Tell monaco editor where to load dependencies from
     loader.config({ paths: { vs: `${config.assetsPath}/static/js/vendor/monaco/package/min/vs` } });
-
-    // Set theme color for ant-design
-    ConfigProvider.config({
-        theme: {
-            primaryColor: colors.brandOrange,
-
-            infoColor: colors.brandBlue,
-            successColor: colors.brandSuccess,
-            // processingColor: colors.debugRed,
-            errorColor: colors.brandError,
-            warningColor: colors.brandWarning,
-        },
-    });
-
 
     // Configure MobX
     configure({

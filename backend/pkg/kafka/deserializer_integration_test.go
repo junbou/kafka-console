@@ -26,7 +26,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/go-connections/nat"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -105,7 +104,7 @@ func (s *KafkaIntegrationTestSuite) SetupSuite() {
 
 	ctx := context.Background()
 
-	redpandaContainer, err := redpanda.RunContainer(ctx, testcontainers.WithImage("redpandadata/redpanda:v23.1.13"))
+	redpandaContainer, err := redpanda.RunContainer(ctx, testcontainers.WithImage("redpandadata/redpanda:v23.3.2"))
 	require.NoError(err)
 
 	s.redpandaContainer = redpandaContainer
@@ -175,7 +174,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 			Timestamp: recordTimeStamp,
 		}
 
-		produceCtx, produceCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		produceCtx, produceCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer produceCancel()
 
 		results := s.kafkaClient.ProduceSync(produceCtx, r)
@@ -210,7 +209,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 		dr := svc.Deserializer.DeserializeRecord(record)
 		require.NotNil(dr)
 		assert.Equal(messageEncodingJSON, dr.Value.Payload.RecognizedEncoding)
-		assert.IsType(map[string]interface{}{}, dr.Value.Object)
+		assert.IsType(map[string]any{}, dr.Value.Object)
 
 		rOrder := testutil.Order{}
 		err = json.Unmarshal(dr.Value.Payload.Payload, &rOrder)
@@ -263,7 +262,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 			Timestamp: orderCreatedAt,
 		}
 
-		produceCtx, produceCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		produceCtx, produceCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer produceCancel()
 
 		results := s.kafkaClient.ProduceSync(produceCtx, r)
@@ -298,7 +297,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 		dr := svc.Deserializer.DeserializeRecord(record)
 		require.NotNil(dr)
 		assert.Equal(messageEncodingProtobuf, dr.Value.Payload.RecognizedEncoding)
-		assert.IsType(map[string]interface{}{}, dr.Value.Object)
+		assert.IsType(map[string]any{}, dr.Value.Object)
 
 		rOrder := shopv1.Order{}
 		err = protojson.Unmarshal(dr.Value.Payload.Payload, &rOrder)
@@ -308,7 +307,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 	})
 
 	t.Run("plain protobuf reference", func(t *testing.T) {
-		testTopicName := testutil.TopicNameForTest("deserializer_plain_protobuf")
+		testTopicName := testutil.TopicNameForTest("deserializer_plain_protobuf_ref")
 		_, err := s.kafkaAdminClient.CreateTopic(ctx, 1, 1, nil, testTopicName)
 		require.NoError(err)
 
@@ -417,7 +416,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 			Timestamp: orderCreatedAt,
 		}
 
-		produceCtx, produceCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		produceCtx, produceCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer produceCancel()
 
 		results := s.kafkaClient.ProduceSync(produceCtx, r)
@@ -452,7 +451,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 		dr := svc.Deserializer.DeserializeRecord(record)
 		require.NotNil(dr)
 		assert.Equal(messageEncodingProtobuf, dr.Value.Payload.RecognizedEncoding)
-		assert.IsType(map[string]interface{}{}, dr.Value.Object)
+		assert.IsType(map[string]any{}, dr.Value.Object)
 
 		rOrder := shopv2.Order{}
 		err = protojson.Unmarshal(dr.Value.Payload.Payload, &rOrder)
@@ -583,7 +582,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 			Timestamp: orderCreatedAt,
 		}
 
-		produceCtx, produceCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		produceCtx, produceCancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer produceCancel()
 
 		results := s.kafkaClient.ProduceSync(produceCtx, r)
@@ -619,7 +618,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 		dr := svc.Deserializer.DeserializeRecord(record)
 		require.NotNil(dr)
 		assert.Equal(messageEncodingProtobuf, dr.Value.Payload.RecognizedEncoding)
-		assert.IsType(map[string]interface{}{}, dr.Value.Object)
+		assert.IsType(map[string]any{}, dr.Value.Object)
 
 		rOrder := shopv1.Order{}
 		err = protojson.Unmarshal(dr.Value.Payload.Payload, &rOrder)
@@ -757,7 +756,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 		dr := svc.Deserializer.DeserializeRecord(record)
 		require.NotNil(dr)
 		assert.Equal(messageEncodingProtobuf, dr.Value.Payload.RecognizedEncoding)
-		assert.IsType(map[string]interface{}{}, dr.Value.Object)
+		assert.IsType(map[string]any{}, dr.Value.Object)
 
 		cm := common.CommonMessage{}
 		err = protojson.Unmarshal(dr.Value.Payload.Payload, &cm)
@@ -870,7 +869,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 			Topic: testTopicName,
 		}
 
-		produceCtx, produceCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		produceCtx, produceCancel := context.WithTimeout(context.Background(), 7*time.Second)
 		defer produceCancel()
 
 		results := s.kafkaClient.ProduceSync(produceCtx, r)
@@ -906,7 +905,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 		dr := svc.Deserializer.DeserializeRecord(record)
 		require.NotNil(dr)
 		assert.Equal(messageEncodingProtobuf, dr.Value.Payload.RecognizedEncoding)
-		assert.IsType(map[string]interface{}{}, dr.Value.Object)
+		assert.IsType(map[string]any{}, dr.Value.Object)
 
 		rObject := indexv1.Gadget{}
 		err = protojson.Unmarshal(dr.Value.Payload.Payload, &rObject)
@@ -1008,12 +1007,12 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 		require.NoError(err)
 
 		r := &kgo.Record{
-			// Key:   []byte(msg.GetIdentity()),
+			Key:   []byte("item_0"),
 			Value: msgData,
 			Topic: testTopicName,
 		}
 
-		produceCtx, produceCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		produceCtx, produceCancel := context.WithTimeout(context.Background(), 7*time.Second)
 		defer produceCancel()
 
 		results := s.kafkaClient.ProduceSync(produceCtx, r)
@@ -1049,7 +1048,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 		dr := svc.Deserializer.DeserializeRecord(record)
 		require.NotNil(dr)
 		assert.Equal(messageEncodingProtobuf, dr.Value.Payload.RecognizedEncoding)
-		assert.IsType(map[string]interface{}{}, dr.Value.Object)
+		assert.IsType(map[string]any{}, dr.Value.Object)
 
 		rObject := indexv1.Gadget_Gizmo{}
 		err = protojson.Unmarshal(dr.Value.Payload.Payload, &rObject)
@@ -1234,7 +1233,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 			Timestamp: orderCreatedAt,
 		}
 
-		produceCtx, produceCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		produceCtx, produceCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer produceCancel()
 
 		results := s.kafkaClient.ProduceSync(produceCtx, r)
@@ -1270,7 +1269,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 		dr := svc.Deserializer.DeserializeRecord(record)
 		require.NotNil(dr)
 		assert.Equal(messageEncodingProtobuf, dr.Value.Payload.RecognizedEncoding)
-		assert.IsType(map[string]interface{}{}, dr.Value.Object)
+		assert.IsType(map[string]any{}, dr.Value.Object)
 
 		rOrder := shopv2.Order{}
 		err = protojson.Unmarshal(dr.Value.Payload.Payload, &rOrder)
@@ -1437,7 +1436,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 		dr := svc.Deserializer.DeserializeRecord(record)
 		require.NotNil(dr)
 		assert.Equal(messageEncodingProtobuf, dr.Value.Payload.RecognizedEncoding)
-		assert.IsType(map[string]interface{}{}, dr.Value.Object)
+		assert.IsType(map[string]any{}, dr.Value.Object)
 
 		rOrder := shopv1.Order{}
 		err = protojson.Unmarshal(dr.Value.Payload.Payload, &rOrder)
@@ -1464,7 +1463,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 		require.NotNil(ss2)
 
 		// verify update
-		srRes, err := rcl.Schemas(ctx, testTopicName+"-value", sr.ShowDeleted)
+		srRes, err := rcl.Schemas(sr.WithParams(ctx, sr.ShowDeleted), testTopicName+"-value")
 		require.NoError(err)
 		assert.Len(srRes, 2)
 		assert.Equal(ss.ID, srRes[0].ID)
@@ -1473,7 +1472,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 		msg2ID := "333"
 		order2CreatedAt := time.Date(2023, time.July, 11, 14, 0, 0, 0, time.UTC)
 		order2CreatedAtStr := order2CreatedAt.Format(time.DateTime)
-		order2CreateInput := fmt.Sprintf(`{"id":"%s","version":22,"created_at":"%s","order_value":3456}`, msg2ID, order2CreatedAtStr)
+		order2CreateInput := fmt.Sprintf(`{"id":%q,"version":22,"created_at":%q,"order_value":3456}`, msg2ID, order2CreatedAtStr)
 		msgData, err = serializeShopV1_2(order2CreateInput, ss2.ID)
 		require.NoError(err)
 
@@ -1531,7 +1530,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 				dr := svc2.Deserializer.DeserializeRecord(cr)
 				require.NotNil(dr)
 				assert.Equal(messageEncodingProtobuf, dr.Value.Payload.RecognizedEncoding)
-				assert.IsType(map[string]interface{}{}, dr.Value.Object)
+				assert.IsType(map[string]any{}, dr.Value.Object)
 
 				ov1 := shopv1.Order{}
 				err = protojson.Unmarshal(dr.Value.Payload.Payload, &ov1)
@@ -1549,7 +1548,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 				dr := svc2.Deserializer.DeserializeRecord(cr)
 				require.NotNil(dr)
 				assert.Equal(messageEncodingProtobuf, dr.Value.Payload.RecognizedEncoding)
-				assert.IsType(map[string]interface{}{}, dr.Value.Object)
+				assert.IsType(map[string]any{}, dr.Value.Object)
 
 				// the JSON tags have to match shopv_1 Order protojson tags
 				type v1_2Order struct {
@@ -1610,7 +1609,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 			Topic: testTopicName,
 		}
 
-		produceCtx, produceCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		produceCtx, produceCancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer produceCancel()
 
 		results := s.kafkaClient.ProduceSync(produceCtx, r)
@@ -1680,7 +1679,7 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 			Topic: testTopicName,
 		}
 
-		produceCtx, produceCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		produceCtx, produceCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer produceCancel()
 
 		results := s.kafkaClient.ProduceSync(produceCtx, r)
@@ -1722,20 +1721,6 @@ func (s *KafkaIntegrationTestSuite) TestDeserializeRecord() {
 		assert.Equal("text", dr.Key.Object)
 		assert.Equal([]byte("text"), dr.Key.Payload.Payload)
 	})
-}
-
-func getMappedHostPort(ctx context.Context, c testcontainers.Container, port nat.Port) (string, error) {
-	hostIP, err := c.Host(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to get hostIP: %w", err)
-	}
-
-	mappedPort, err := c.MappedPort(ctx, port)
-	if err != nil {
-		return "", fmt.Errorf("failed to get mapped port: %w", err)
-	}
-
-	return fmt.Sprintf("%v:%d", hostIP, mappedPort.Int()), nil
 }
 
 // We cannot import both shopv1 and shopv1_2 (proto_updated) packages.

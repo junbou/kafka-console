@@ -17,6 +17,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/cloudhut/common/rest"
+	con "github.com/cloudhut/connect-client"
 	"go.uber.org/zap"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
 
@@ -109,12 +110,43 @@ func (s *Service) CreateConnector(ctx context.Context, req *connect.Request[v1al
 }
 
 // GetConnector implements the handler for the get connector operation
-func (*Service) GetConnector(context.Context, *connect.Request[v1alpha1.GetConnectorRequest]) (*connect.Response[v1alpha1.GetConnectorResponse], error) {
-	return nil, apierrors.NewConnectError(
-		connect.CodeUnimplemented,
-		errors.New("endpoint is not implemented"),
-		apierrors.NewErrorInfo(v1alpha1.Reason_REASON_KAFKA_CONNECT_API_ERROR.String()),
-	)
+func (s *Service) GetConnector(ctx context.Context, req *connect.Request[v1alpha1.GetConnectorRequest]) (*connect.Response[v1alpha1.GetConnectorResponse], error) {
+	httpRes, err := s.connectSvc.GetConnectorInfo(ctx, req.Msg.ClusterName, req.Msg.Name)
+	if err != nil {
+		return nil, s.matchError(err)
+	}
+
+	res := connect.NewResponse(&v1alpha1.GetConnectorResponse{
+		Connector: s.mapper.connectorSpecToProto(httpRes),
+	})
+
+	return res, nil
+}
+
+// GetConnectorStatus implements the handler for the get connector status operation
+func (s *Service) GetConnectorStatus(ctx context.Context, req *connect.Request[v1alpha1.GetConnectorStatusRequest]) (*connect.Response[v1alpha1.GetConnectorStatusResponse], error) {
+	httpRes, restErr := s.connectSvc.GetConnectorStatus(ctx, req.Msg.ClusterName, req.Msg.Name)
+	if restErr != nil {
+		return nil, s.matchError(restErr)
+	}
+
+	status, err := s.mapper.connectorStatusToProto(httpRes)
+	if err != nil {
+		s.logger.Error("error mapping response for connector", zap.Error(err), zap.String("cluster", req.Msg.ClusterName), zap.String("connector", req.Msg.Name))
+		return nil, apierrors.NewConnectError(
+			connect.CodeInternal,
+			err,
+			apierrors.NewErrorInfo(
+				v1alpha1.Reason_REASON_KAFKA_CONNECT_API_ERROR.String(),
+			),
+		)
+	}
+
+	res := connect.NewResponse(&v1alpha1.GetConnectorStatusResponse{
+		Status: status,
+	})
+
+	return res, nil
 }
 
 // ResumeConnector implements the handler for the resume connector operation
@@ -157,15 +189,29 @@ func (s *Service) DeleteConnector(ctx context.Context, req *connect.Request[v1al
 	return res, nil
 }
 
-// RestartConnector implements the handler for the restart connector operation
+// RestartConnector implements the handler for the restart connector operation.
+// For now we only return 204 but don't account for the other response codes
+// and response bodies
 func (s *Service) RestartConnector(ctx context.Context, req *connect.Request[v1alpha1.RestartConnectorRequest]) (*connect.Response[emptypb.Empty], error) {
 	if err := s.connectSvc.RestartConnector(ctx, req.Msg.ClusterName, req.Msg.Name, req.Msg.Options.IncludeTasks, req.Msg.Options.OnlyFailed); err != nil {
 		return nil, s.matchError(err)
 	}
 
 	res := connect.NewResponse(&emptypb.Empty{})
-	// Set header to 204 accepted
+	// Set header to 204 no content
 	res.Header().Set("x-http-code", "204")
+	return res, nil
+}
+
+// StopConnector implements the handler for the stop connector operation
+func (s *Service) StopConnector(ctx context.Context, req *connect.Request[v1alpha1.StopConnectorRequest]) (*connect.Response[emptypb.Empty], error) {
+	if err := s.connectSvc.StopConnector(ctx, req.Msg.ClusterName, req.Msg.Name); err != nil {
+		return nil, s.matchError(err)
+	}
+
+	res := connect.NewResponse(&emptypb.Empty{})
+	// Set header to 202 accepted
+	res.Header().Set("x-http-code", "202")
 	return res, nil
 }
 
@@ -184,27 +230,83 @@ func (s *Service) ListConnectClusters(ctx context.Context, _ *connect.Request[v1
 	}), nil
 }
 
-// GetConnectCluster implements the handler for the restart connector operation
+// GetConnectCluster implements the get connector info operation
 func (s *Service) GetConnectCluster(ctx context.Context, req *connect.Request[v1alpha1.GetConnectClusterRequest]) (*connect.Response[v1alpha1.GetConnectClusterResponse], error) {
 	response, httpErr := s.connectSvc.GetClusterInfo(ctx, req.Msg.ClusterName)
 	if httpErr != nil {
 		return nil, s.matchError(httpErr)
 	}
-
-	clusterInfoProto, err := s.mapper.ClusterInfoToProto(response)
-	if err != nil {
-		s.logger.Error("unable to map list connectors response", zap.Error(err))
-		return nil, apierrors.NewConnectError(
-			connect.CodeInternal,
-			errors.New("not able to parse response"),
-			apierrors.NewErrorInfo(
-				v1alpha1.Reason_REASON_KAFKA_CONNECT_API_ERROR.String(),
-			),
-		)
-	}
 	return connect.NewResponse(&v1alpha1.GetConnectClusterResponse{
-		Cluster: clusterInfoProto,
+		Cluster: s.mapper.clusterInfoToProto(response),
 	}), nil
+}
+
+// UpsertConnector implements the handler for the upsert connector operation
+func (s *Service) UpsertConnector(ctx context.Context, req *connect.Request[v1alpha1.UpsertConnectorRequest]) (*connect.Response[v1alpha1.UpsertConnectorResponse], error) {
+	putConnectorConfigRequest := con.PutConnectorConfigOptions{
+		Config: convertStringMapToInterfaceMap(req.Msg.Config),
+	}
+
+	isNew := false
+
+	if _, err := s.connectSvc.GetConnectorConfig(ctx, req.Msg.ClusterName, req.Msg.Name); err != nil {
+		if err.Status == http.StatusNotFound {
+			isNew = true
+		}
+	}
+
+	conInfo, err := s.connectSvc.PutConnectorConfig(ctx, req.Msg.ClusterName, req.Msg.Name, putConnectorConfigRequest)
+	if err != nil {
+		return nil, s.matchError(err)
+	}
+
+	res := connect.NewResponse(&v1alpha1.UpsertConnectorResponse{
+		Connector: s.mapper.connectorSpecToProto(conInfo),
+	})
+
+	// Check if connector already exists, if not set header to 201 created
+	if isNew {
+		res.Header().Set("x-http-code", "201")
+	}
+
+	return res, nil
+}
+
+// GetConnectorConfig implements the handler for the get connector configuration operation
+func (s *Service) GetConnectorConfig(ctx context.Context, req *connect.Request[v1alpha1.GetConnectorConfigRequest]) (*connect.Response[v1alpha1.GetConnectorConfigResponse], error) {
+	config, err := s.connectSvc.GetConnectorConfig(ctx, req.Msg.ClusterName, req.Msg.Name)
+	if err != nil {
+		return nil, s.matchError(err)
+	}
+	return connect.NewResponse(&v1alpha1.GetConnectorConfigResponse{
+		Config: config,
+	}), nil
+}
+
+// ListConnectorTopics implements the handler for the list connector topics
+// operation,There is no defined order in which the topics are returned and
+// consecutive calls may return the same topic names but in different order
+func (s *Service) ListConnectorTopics(ctx context.Context, req *connect.Request[v1alpha1.ListConnectorTopicsRequest]) (*connect.Response[v1alpha1.ListConnectorTopicsResponse], error) {
+	connectorTopics, err := s.connectSvc.ListConnectorTopics(ctx, req.Msg.ClusterName, req.Msg.Name)
+	if err != nil {
+		return nil, s.matchError(err)
+	}
+	return connect.NewResponse(&v1alpha1.ListConnectorTopicsResponse{
+		Topics: connectorTopics.Topics,
+	}), nil
+}
+
+// ResetConnectorTopics implements the handler for the reset connector topics
+// operation, Resets the set of topic names that the connector has been using
+// since its creation or since the last time its set of active topics was
+// reset.
+func (s *Service) ResetConnectorTopics(ctx context.Context, req *connect.Request[v1alpha1.ResetConnectorTopicsRequest]) (*connect.Response[emptypb.Empty], error) {
+	err := s.connectSvc.ResetConnectorTopics(ctx, req.Msg.ClusterName, req.Msg.Name)
+	if err != nil {
+		return nil, s.matchError(err)
+	}
+
+	return connect.NewResponse(&emptypb.Empty{}), nil
 }
 
 func (*Service) matchError(err *rest.Error) *connect.Error {
@@ -220,6 +322,14 @@ func (*Service) matchError(err *rest.Error) *connect.Error {
 	case http.StatusConflict:
 		return apierrors.NewConnectError(
 			connect.CodeAlreadyExists,
+			err.Err,
+			apierrors.NewErrorInfo(
+				v1alpha1.Reason_REASON_KAFKA_CONNECT_API_ERROR.String(),
+			),
+		)
+	case http.StatusBadRequest:
+		return apierrors.NewConnectError(
+			connect.CodeInvalidArgument,
 			err.Err,
 			apierrors.NewErrorInfo(
 				v1alpha1.Reason_REASON_KAFKA_CONNECT_API_ERROR.String(),

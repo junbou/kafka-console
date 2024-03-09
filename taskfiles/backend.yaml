@@ -1,9 +1,23 @@
 version: 3
 tasks:
+  install-go:
+    desc: install golang compiler
+    run: once
+    vars:
+      GOLANG_URL_DEFAULT: https://golang.org/dl/go{{.GO_VERSION}}.{{OS}}-{{ARCH}}.tar.gz
+      GOLANG_URL: '{{default .GOLANG_URL_DEFAULT .GOLANG_URL}}'
+    cmds:
+      - rm -rf {{.GO_BUILD_ROOT}}
+      - mkdir -p '{{.GO_BUILD_ROOT}}'
+      - curl -sSLf --retry 3 --retry-connrefused --retry-delay 2 '{{.GOLANG_URL}}' | tar -xz -C '{{.GO_BUILD_ROOT}}' --strip 1
+    status:
+      - test -f '{{.GO_BUILD_ROOT}}/bin/go'
+      - '[[ $({{.GO_BUILD_ROOT}}/bin/go version) == *"go version go{{ .GO_VERSION }}"* ]]'
+
   install-golangci-lint:
     desc: install golangci linter
     vars:
-      GO_LINT_VERSION: 1.51.2
+      GO_LINT_VERSION: 1.56.2
     cmds:
       - mkdir -p {{ .BUILD_ROOT}}/bin
       - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "{{ .BUILD_ROOT }}"/bin/go v{{ .GO_LINT_VERSION }}
@@ -13,49 +27,63 @@ tasks:
 
   install-goimports:
     desc: install goimports
+    vars:
+      GOIMPORTS_VERSION: v0.18.0
+    deps:
+      - install-go
     cmds:
-      - GOBIN={{ .BUILD_ROOT }}/bin/go go install golang.org/x/tools/cmd/goimports@latest
+      - |
+        {{ .PATH_PREFIX }} go install golang.org/x/tools/cmd/goimports@{{ .GOIMPORTS_VERSION }}
     status:
       - '[ -f ''{{ .BUILD_ROOT }}/bin/go'' ] || command -v {{ .BUILD_ROOT }}/bin/go/goimports >/dev/null 2>&1'
 
   install-gofumpt:
     vars:
-      GOFUMPT_VERSION: 0.4.0
+      GOFUMPT_VERSION: 0.6.0
     desc: install gofumpt go formater
+    deps:
+      - install-go
     cmds:
       - |
-        GOBIN={{ .BUILD_ROOT }}/bin/go go install mvdan.cc/gofumpt@v{{ .GOFUMPT_VERSION }}
+        {{ .PATH_PREFIX }} go install mvdan.cc/gofumpt@v{{ .GOFUMPT_VERSION }}
     status:
       - '[ -f ''{{ .BUILD_ROOT }}/bin/go'' ] || command -v {{ .BUILD_ROOT }}/bin/go/gofumpt >/dev/null 2>&1'
       - '[[ $({{ .BUILD_ROOT }}/bin/go/gofumpt --version) == v{{.GOFUMPT_VERSION}} ]]'
 
   install-gci:
     vars:
-      GCI_VERSION: 0.9.0
+      GCI_VERSION: 0.13.0
     desc: install gci
+    deps:
+      - install-go
     cmds:
-      - GOBIN={{ .BUILD_ROOT }}/bin/go go install github.com/daixiang0/gci@v{{.GCI_VERSION}}
+      - |
+        {{ .PATH_PREFIX }} go install github.com/daixiang0/gci@v{{.GCI_VERSION}}
     status:
-      - '[ -f ''{{ .BUILD_ROOT }}/bin/go'' ] || command -v {{ .BUILD_ROOT }}/bin/go/gci >/dev/null 2>&1'
+      - '[[ $({{ .BUILD_ROOT }}/bin/go/gci --version) == v{{.GCI_VERSION}} ]]'
 
   install-tparse:
     vars:
-      TPARSE_VERSION: 0.12.1
+      TPARSE_VERSION: 0.13.2
     desc: install tparse go test parser
+    deps:
+      - install-go
     cmds:
       - |
-        GOBIN={{ .BUILD_ROOT }}/bin/go go install github.com/mfridman/tparse@v{{ .TPARSE_VERSION }}
+        {{ .PATH_PREFIX }} go install github.com/mfridman/tparse@v{{ .TPARSE_VERSION }}
     status:
       - '[ -f ''{{ .BUILD_ROOT }}/bin/go'' ] || command -v {{ .BUILD_ROOT }}/bin/go/tparse >/dev/null 2>&1'
       - '[[ $({{ .BUILD_ROOT }}/bin/go/tparse --version) == tparse version:v{{.TPARSE_VERSION}} ]]'
 
   install-gomock:
     vars:
-      GOMOCK_VERSION: 1.6.0
+      GOMOCK_VERSION: 0.4.0
     desc: install gomock
+    deps:
+      - install-go
     cmds:
       - |
-        GOBIN={{ .BUILD_ROOT }}/bin/go go install github.com/golang/mock/mockgen@v{{ .GOMOCK_VERSION }}
+        {{ .PATH_PREFIX }} go install go.uber.org/mock/mockgen@v{{ .GOMOCK_VERSION }}
     status:
       - "[ -f '{{ .BUILD_ROOT }}/bin/go' ] || command -v {{ .BUILD_ROOT }}/bin/go/mockgen >/dev/null 2>&1"
       - "[[ $({{ .BUILD_ROOT }}/bin/go/mockgen --version) == 'v{{.GOMOCK_VERSION}}' ]]"
@@ -64,9 +92,11 @@ tasks:
     vars:
       IFACEMAKER_VERSION: 1.2.1
     desc: install ifacemaker
+    deps:
+      - install-go
     cmds:
       - |
-        GOBIN={{ .BUILD_ROOT }}/bin/go go install github.com/vburenin/ifacemaker@v{{ .IFACEMAKER_VERSION }}
+        {{ .PATH_PREFIX }} go install github.com/vburenin/ifacemaker@v{{ .IFACEMAKER_VERSION }}
     status:
       - "[ -f '{{ .BUILD_ROOT }}/bin/go' ] || command -v {{ .BUILD_ROOT }}/bin/go/ifacemaker >/dev/null 2>&1"
 
@@ -80,15 +110,26 @@ tasks:
     cmds:
       - '{{ .BUILD_ROOT }}/bin/go/goimports -l -w -local "github.com/redpanda-data/console/backend" .'
       - '{{ .BUILD_ROOT }}/bin/go/gofumpt -l -w .'
-      - '{{ .BUILD_ROOT }}/bin/go/gci write -s standard -s default -s ''Prefix(github.com/redpanda-data/console/backend)'' .'
+      # https://github.com/daixiang0/gci/issues/174
+      # moves "maps" into the wrong place
+      - '{{ .BUILD_ROOT }}/bin/go/gci write -s default -s standard -s ''prefix(github.com/redpanda-data/console/backend)'' .'
 
   lint:
     desc: Run Go linters for backend code
     deps:
       - install-golangci-lint
+    vars:
+      FIX: '{{ .FIX  | default "" }}'
     dir: "{{.BACKEND_ROOT}}"
     cmds:
-      - '{{ .BUILD_ROOT }}/bin/go/golangci-lint run --timeout 10m ./...'
+      - '{{ .BUILD_ROOT }}/bin/go/golangci-lint run {{ .FIX }} -v --timeout 10m ./...'
+
+  lint-fix:
+    desc: Run Go linters for backend code fixing fixable issues
+    cmds:
+      - task: lint
+        vars:
+          FIX: --fix
 
   generate:
     dir: "{{.BACKEND_ROOT}}"
@@ -98,29 +139,24 @@ tasks:
       - install-ifacemaker
     cmds:
       - |
-        export PATH=$PATH:{{ .BUILD_ROOT }}/bin/go
-        GOBIN={{ .BUILD_ROOT }}/bin/go go generate ./...
+        {{ .PATH_PREFIX }} go generate ./...
       - task: ':proto:generate'
       - task: 'fmt'
 
   test-unit:
     dir: "{{.BACKEND_ROOT}}"
     desc: Run Go unit tests
-    deps:
-      - generate
     cmds:
       - |
-        GOBIN={{ .BUILD_ROOT }}/bin/go go test ./...
+        {{ .PATH_PREFIX }} go test ./...
 
   test-integration:
     dir: "{{.BACKEND_ROOT}}"
     desc: Run integration tests
-    deps:
-      - generate
     cmds:
       - |
-        GOBIN={{ .BUILD_ROOT }}/bin/go go test --tags=integration ./...
-  
+        {{ .PATH_PREFIX }} go test -v -race --tags=integration -p=1 {{.CLI_ARGS | default "./..." }}
+
   cover:
     dir: "{{.BACKEND_ROOT}}"
     desc: Run integration tests with code coverage
@@ -128,12 +164,14 @@ tasks:
       - install-tparse
       - generate
     cmds:
+      - task: 'lint'
       - |
-        GOBIN={{ .BUILD_ROOT }}/bin/go go test -race --tags=integration -json -cover ./... | {{ .BUILD_ROOT }}/bin/go/tparse
+        {{ .PATH_PREFIX }} go test -race --tags=integration -json -cover {{.CLI_ARGS | default "./..." }} | {{ .BUILD_ROOT }}/bin/go/tparse
 
   verify:
     dir: "{{.BACKEND_ROOT}}"
     desc: Run lint and tests
-    cmds: 
+    cmds:
       - task: 'lint'
-      - task: 'cover'
+      - task: 'generate'
+      - task: 'test-integration'

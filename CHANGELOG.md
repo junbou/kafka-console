@@ -1,5 +1,69 @@
 # Changelog
 
+## v2.4.5 / 2024-03-06
+
+- [SECURITY] Update Go to v1.22.1 to address multiple [CVEs](https://groups.google.com/g/golang-announce/c/5pwGVUPoMbg).
+- [IMPROVEMENT] Wrap long topic names instead of truncating them in the topics list [#1159](https://github.com/redpanda-data/console/pull/1159).
+
+## v2.4.4 / 2024-03-04
+
+- [FIX] Fix for glob patterns for adapting the preview in the list messages table [#1116](https://github.com/redpanda-data/console/pull/1116).
+- [FIX] Show last available page in paginated search results to avoid blank page content [#1121](https://github.com/redpanda-data/console/pull/1121).
+- [FIX] Send heartbeats in HTTP stream to load messages to avoid idle timeouts from LoadBalancers and reverse proxies [#1109](https://github.com/redpanda-data/console/pull/1109).
+- [IMPROVEMENT] Better handling for long resource names (e.g. topic names) in the UI [#1124](https://github.com/redpanda-data/console/pull/1124).
+- [IMPROVEMENT] Add option to download messages that are too large to be displayed by default [#1129](https://github.com/redpanda-data/console/pull/1129).
+- [IMPROVEMENT] Add `offset.lag.max` option to advanced configuration in the MirrorMaker2 connector setup [#1131](https://github.com/redpanda-data/console/pull/1131).
+
+## v2.4.3 / 2024-02-08
+
+- [FIX] Persist pagination settings in local storage [#1095](https://github.com/redpanda-data/console/pull/1095).
+- [FIX] Re-add search bar to filter connectors by their name [#1094](https://github.com/redpanda-data/console/pull/1094).
+- [FIX] Only update the custom offset in the message search if it's a number [#1092](https://github.com/redpanda-data/console/pull/1092).
+- [FIX] Pushdown filters no longer failed to match when plain strings in key or value were used [#1093](https://github.com/redpanda-data/console/pull/1093).
+- [IMPROVEMENT] Cache custom offset input in message search [#1092](https://github.com/redpanda-data/console/pull/1092).
+
+## v2.4.2 / 2024-02-06
+
+- [FIX] Fix pagination issue in frontend.
+- [FIX] Fix regex filtering issue in ACL screen in frontend [#1080](https://github.com/redpanda-data/console/issues/1080).
+- [FIX] Fix inconsistent filtering issue with list messages API when using pushdown filters [#1073](https://github.com/redpanda-data/console/issues/1073).
+- [IMPROVEMENT] Optimize schema registry protobuf refresh to reduce memory usage [#1040](https://github.com/redpanda-data/console/pull/1040).
+
+## v2.4.1 / 2024-02-02
+
+- [FIX] Fix bug in schema registry URL paths for subject names that used escaping characters (i.e. %2F)
+- [FIX] The pagination component to select different pages always shows up now [#1034](https://github.com/redpanda-data/console/issues/1032)
+- [FIX] When sorting the Kafka topics by size the order was off, the column ordering is fixed now
+- [FIX] Using the "copy value" action for a Kafka record no longer includes the payload property multiple times [#1054](https://github.com/redpanda-data/console/issues/1054)
+- [FIX] Selecting the "size" column as the only column to show in the table settings used to throw an exception [#1051](https://github.com/redpanda-data/console/issues/1051)
+- [FIX] Fix decoding for msgpack encoded payloads [#1034](https://github.com/redpanda-data/console/issues/1034)
+- [FIX] Under certain circumstances the download messages button downloaded an empty JSON array instead of the shown records [#1031](https://github.com/redpanda-data/console/issues/1031)
+- [FIX] Searching for topics in the topicslist' quicksearch box using a regex did no longer work [#1026](https://github.com/redpanda-data/console/issues/1026)
+- [IMPROVEMENT] Document new `console.maxDeserializationPayloadSize` config to control max message size that is still shown in the frontend
+
+## v2.3.10 / 2024-01-29
+
+- [FIX] Fix bug in schema registry URL paths.
+- [CHANGE] Add better error logging for websocket upgrade.
+
+## v2.4.0 / 2024-01-23
+
+- [FEATURE] Specify strategy (e.g. INT8) for decoding messages
+- [FEATURE] Show summary of each failed decoding strategy when auto decoding messages fails
+- [FEATURE] Full schema management (create, update, delete, compare versions)
+- [IMPROVEMENT] Add button to copy password to clipboard after creating a new user
+- [IMPROVEMENT] Deprecate Websockets in favour of HTTP streaming for streaming messages
+- [IMPROVEMENT] Align UI with Redpanda theme by migrating frontend components from AntD to Redpanda's UI library
+- [IMPROVEMENT] Several improvements for existing and new connectors in the Kafka Connect setup wizard
+
+## v2.3.9 / 2024-01-15
+
+- [SECURITY] Update update github.com/go-git/go-git/v5 to address CVE-2023-4956.
+
+## v2.3.8 / 2023-12-06
+
+- [SECURITY] Update a dependency that may allow to run a DoS attack
+
 ## v2.3.7 / 2023-11-17
 
 - [SECURITY] Build new Docker image running with the latest openssl/libcrypto3 lib which addresses CVE-2023-5363. The previous v2.3.6 did in fact not fix this CVE.

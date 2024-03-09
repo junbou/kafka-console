@@ -13,7 +13,7 @@ import { makeObservable, observable } from 'mobx';
 import prettyBytesOriginal from 'pretty-bytes';
 import prettyMillisecondsOriginal from 'pretty-ms';
 import { TopicMessage } from '../state/restInterfaces';
-import { Base64 } from 'js-base64';
+import { Base64, fromUint8Array } from 'js-base64';
 
 // Note: Making a <Memo> component is not possible, the container JSX will always render children first so they can be passed as props
 export const nameof = <T>(name: Extract<keyof T, string>): string => name;
@@ -488,6 +488,31 @@ export const prettyBytesOrNA = function (n: number) {
     return prettyBytes(n);
 }
 
+
+/**
+ * Determines if two sets are equal.
+ *
+ * This function checks if two sets (xs and ys) have the same size and
+ * the same elements. It assumes that the sets contain elements of type T.
+ * Equality is determined by checking if every element in set xs is also
+ * present in set ys.
+ *
+ * @template T - The type of elements in the sets.
+ * @param {Set<T>} xs - The first set to be compared.
+ * @param {Set<T>} ys - The second set to be compared.
+ * @returns {boolean} - Returns `true` if the sets are equal, otherwise returns `false`.
+ * @example
+ * // returns true
+ * eqSet(new Set([1, 2, 3]), new Set([3, 2, 1]));
+ *
+ * @example
+ * // returns false
+ * eqSet(new Set([1, 2, 3]), new Set([4, 5, 6]));
+ */
+export const eqSet = <T = string,>(xs: Set<T>, ys: Set<T>): boolean =>
+    xs.size === ys.size &&
+    [...xs].every((x) => ys.has(x));
+
 export type PrettyValueOptions = {
     /** Show 'Infinite' for greater or equal to 2^64-1 */
     showLargeAsInfinite?: boolean;
@@ -656,11 +681,42 @@ export function scrollTo(targetId: string, anchor: 'start' | 'end' | 'center' = 
 
 // See: https://stackoverflow.com/questions/30106476/using-javascripts-atob-to-decode-base64-doesnt-properly-decode-utf-8-strings
 export function decodeBase64(base64: string) {
+    if (!base64)
+        return base64;
+
     return Base64.decode(base64);
 }
 
 export function encodeBase64(rawData: string) {
     return Base64.encode(rawData);
+}
+
+/**
+ * Validates whether a given string is a valid Base64 encoded string.
+ *
+ * This function tries to decode the string using the Base64.decode method from the js-base64 library.
+ * If the decoding is successful without throwing an exception, the string is considered a valid Base64 string.
+ * If an exception occurs during decoding, it is caught, and the function returns false, indicating that
+ * the string is not a valid Base64 encoded string.
+ *
+ * @param {string} str - The string to be validated as a Base64 encoded string.
+ * @returns {boolean} - Returns true if the string is a valid Base64 encoded string; false otherwise.
+ */
+export function isValidBase64(str: string): boolean {
+    try {
+        Base64.decode(str);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+export function base64FromUInt8Array(ar: Uint8Array) {
+    return fromUint8Array(ar);
+}
+
+export function base64ToUInt8Array(base64: string) {
+    return Base64.toUint8Array(base64);
 }
 
 export function base64ToHexString(base64: string): string {
@@ -683,6 +739,24 @@ export function base64ToHexString(base64: string): string {
     }
     catch (err) {
         return '<<Unable to decode message>>';
+    }
+}
+
+export function uint8ArrayToHexString(ar: Uint8Array): string {
+    try {
+        let hex = '';
+        for (let i = 0; i < ar.length; i++) {
+            const b = ar[i].toString(16);
+            hex += b.length === 1 ? '0' + b : b;
+
+            if (i < ar.length - 1)
+                hex += ' ';
+        }
+
+        return hex;
+    }
+    catch (err) {
+        return '<<Unable to convert uint8Array to hex>>';
     }
 }
 
@@ -732,3 +806,23 @@ export function retrier<T>(operation: () => Promise<T>, { attempts = Infinity, d
  * performing indexing
  */
 export type ElementOf<T> = T extends (infer E)[] ? E : T extends readonly (infer F)[] ? F : never;
+
+/**
+ * Truncates a string to a specified length and adds an ellipsis (...) if the truncation occurs.
+ *
+ * @param {string} input The string to truncate.
+ * @param {number} maxLength The maximum length of the string, including the ellipsis.
+ * @returns {string} The truncated string with ellipsis if truncation was necessary, otherwise the original string.
+ */
+export function substringWithEllipsis(input: string, maxLength: number): string {
+    // Check if the input length is greater than the maxLength
+    // Note: We account for the length of the ellipsis in the comparison
+    if (input.length > maxLength) {
+        // Subtract 3 from maxLength to accommodate the ellipsis
+        // Ensure maxLength is at least 4 to avoid negative substring lengths
+        const effectiveLength = Math.max(maxLength - 3, 1);
+        return input.substring(0, effectiveLength) + '...';
+    } else {
+        return input;
+    }
+}

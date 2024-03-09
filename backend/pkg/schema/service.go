@@ -12,8 +12,10 @@ package schema
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hamba/avro/v2"
@@ -41,6 +43,11 @@ type Service struct {
 	// by subjects is needed to lookup references in avro schemas.
 	schemaBySubjectVersion *cache.Cache[string, *SchemaVersionedResponse]
 	avroSchemaByID         *cache.Cache[uint32, avro.Schema]
+
+	// for protobuf schema refreshing and compiling
+	srRefreshMutex   sync.RWMutex
+	protoSchemasByID map[int]*SchemaVersionedResponse
+	protoFDByID      map[int]*desc.FileDescriptor
 }
 
 // NewService to access schema registry. Returns an error if connection can't be established.
@@ -67,35 +74,73 @@ func (s *Service) CheckConnectivity(ctx context.Context) error {
 
 // GetProtoDescriptors returns all file descriptors in a map where the key is the schema id.
 // The value is a set of file descriptors because each schema may references / imported proto schemas.
+//
+//nolint:gocognit,cyclop // complicated refresh logic
 func (s *Service) GetProtoDescriptors(ctx context.Context) (map[int]*desc.FileDescriptor, error) {
 	// Singleflight makes sure to not run the function body if there are concurrent requests. We use this to avoid
 	// duplicate requests against the schema registry
 	key := "get-proto-descriptors"
-	v, err, _ := s.requestGroup.Do(key, func() (interface{}, error) {
-		schemasRes, err := s.registryClient.GetSchemas(ctx, false)
-		if err != nil {
-			// If schema registry returns an error we want to retry it next time, so let's forget the key
-			s.requestGroup.Forget(key)
-			return nil, fmt.Errorf("failed to get schema from registry: %w", err)
+	_, err, _ := s.requestGroup.Do(key, func() (any, error) {
+		schemasRes, errs := s.registryClient.GetSchemas(ctx, false)
+		if len(errs) > 0 {
+			for _, err := range errs {
+				s.logger.Error("failed to get schema from registry", zap.Error(err))
+			}
+
+			if len(schemasRes) == 0 {
+				return nil, nil
+			}
 		}
 
-		// 1. Index all returned schemas by their respective subject name and version as stored in the schema registry
-		schemasBySubjectAndVersion := make(map[string]map[int]SchemaVersionedResponse)
+		s.srRefreshMutex.Lock()
+		defer s.srRefreshMutex.Unlock()
+
+		if s.protoSchemasByID == nil {
+			s.protoSchemasByID = make(map[int]*SchemaVersionedResponse, len(schemasRes))
+		}
+
+		// collect existing schema IDs
+		existingSchemaIDs := make(map[int]struct{}, len(s.protoSchemasByID))
+		for id := range s.protoSchemasByID {
+			existingSchemaIDs[id] = struct{}{}
+		}
+
+		schemasToCompile := make([]*SchemaVersionedResponse, 0, len(schemasRes))
+
+		newSchemaIDs := make(map[int]struct{}, len(schemasRes))
+
+		// Index all returned schemas by their respective subject name and version as stored in the schema registry
+		// Collect the new or updated schemas to compile
+		schemasBySubjectAndVersion := make(map[string]map[int]*SchemaVersionedResponse)
 		for _, schema := range schemasRes {
+			schema := schema
+
 			if schema.Type != TypeProtobuf {
 				continue
 			}
 			_, exists := schemasBySubjectAndVersion[schema.Subject]
 			if !exists {
-				schemasBySubjectAndVersion[schema.Subject] = make(map[int]SchemaVersionedResponse)
+				schemasBySubjectAndVersion[schema.Subject] = make(map[int]*SchemaVersionedResponse)
 			}
 			schemasBySubjectAndVersion[schema.Subject][schema.Version] = schema
+
+			if existing, ok := s.protoSchemasByID[schema.SchemaID]; !ok || !strings.EqualFold(existing.Schema, schema.Schema) {
+				schemasToCompile = append(schemasToCompile, schema)
+			}
+
+			newSchemaIDs[schema.SchemaID] = struct{}{}
+
+			s.protoSchemasByID[schema.SchemaID] = schema
 		}
 
-		// 2. Compile each subject with each of it's references into one or more filedescriptors so that they can be
+		compileStart := time.Now()
+
+		// 2. Compile each subject with each of it's references into one or more file descriptors so that they can be
 		// registered in their own proto registry.
-		fdBySchemaID := make(map[int]*desc.FileDescriptor)
-		for _, schema := range schemasRes {
+		newFDBySchemaID := make(map[int]*desc.FileDescriptor, len(schemasToCompile))
+		for _, schema := range schemasToCompile {
+			schema := schema
+
 			if schema.Type != TypeProtobuf {
 				continue
 			}
@@ -108,21 +153,57 @@ func (s *Service) GetProtoDescriptors(ctx context.Context) (map[int]*desc.FileDe
 					zap.Error(err))
 				continue
 			}
-			fdBySchemaID[schema.SchemaID] = fd
+			newFDBySchemaID[schema.SchemaID] = fd
 		}
 
-		return fdBySchemaID, nil
+		compileDuration := time.Since(compileStart)
+
+		// merge
+		if s.protoFDByID == nil {
+			s.protoFDByID = make(map[int]*desc.FileDescriptor, len(newFDBySchemaID))
+		}
+
+		maps.Copy(s.protoFDByID, newFDBySchemaID)
+
+		schemasDeleted := 0
+
+		// remove schemas only if no errors
+		if len(errs) == 0 {
+			schemasIDsToDelete := make([]int, 0, len(s.protoSchemasByID)/2)
+
+			for id := range existingSchemaIDs {
+				if _, ok := newSchemaIDs[id]; !ok {
+					schemasIDsToDelete = append(schemasIDsToDelete, id)
+				}
+			}
+
+			for _, id := range schemasIDsToDelete {
+				delete(s.protoSchemasByID, id)
+				delete(s.protoFDByID, id)
+			}
+
+			schemasDeleted = len(schemasIDsToDelete)
+		}
+
+		s.logger.Info("compiled new schemas",
+			zap.Int("updated_schemas", len(schemasToCompile)),
+			zap.Int("deleted_schemas", schemasDeleted),
+			zap.Duration("compile_duration", compileDuration))
+
+		return nil, nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	descriptors := v.(map[int]*desc.FileDescriptor)
+	s.srRefreshMutex.RLock()
+	descriptors := maps.Clone(s.protoFDByID)
+	s.srRefreshMutex.RUnlock()
 
 	return descriptors, nil
 }
 
-func (s *Service) addReferences(schema SchemaVersionedResponse, schemaRepository map[string]map[int]SchemaVersionedResponse, schemasByPath map[string]string) error {
+func (s *Service) addReferences(schema *SchemaVersionedResponse, schemaRepository map[string]map[int]*SchemaVersionedResponse, schemasByPath map[string]string) error {
 	for _, ref := range schema.References {
 		refSubject, exists := schemaRepository[ref.Subject]
 		if !exists {
@@ -144,7 +225,7 @@ func (s *Service) addReferences(schema SchemaVersionedResponse, schemaRepository
 	return nil
 }
 
-func (s *Service) compileProtoSchemas(schema SchemaVersionedResponse, schemaRepository map[string]map[int]SchemaVersionedResponse) (*desc.FileDescriptor, error) {
+func (s *Service) compileProtoSchemas(schema *SchemaVersionedResponse, schemaRepository map[string]map[int]*SchemaVersionedResponse) (*desc.FileDescriptor, error) {
 	// 1. Let's find the references for each schema and put the references' schemas into our in memory filesystem.
 	schemasByPath := make(map[string]string)
 	schemasByPath[schema.Subject] = schema.Schema
@@ -190,6 +271,11 @@ func (s *Service) compileProtoSchemas(schema SchemaVersionedResponse, schemaRepo
 		return nil, fmt.Errorf("failed to parse proto files to descriptors: %w", err)
 	}
 	return descriptors[0], nil
+}
+
+// IsEnabled returns whether the schema registry is enabled in configuration.
+func (s *Service) IsEnabled() bool {
+	return s.cfg.Enabled
 }
 
 // GetAvroSchemaByID loads the schema by the given schemaID and tries to parse the schema
@@ -283,6 +369,11 @@ func (s *Service) GetSchemaReferences(ctx context.Context, subject, version stri
 // that exists. You can use 'latest' to check compatibility with the latest version.
 func (s *Service) CheckCompatibility(ctx context.Context, subject string, version string, schema Schema) (*CheckCompatibilityResponse, error) {
 	return s.registryClient.CheckCompatibility(ctx, subject, version, schema)
+}
+
+// GetSchemaByID gets the schema by ID.
+func (s *Service) GetSchemaByID(ctx context.Context, id uint32) (*SchemaResponse, error) {
+	return s.registryClient.GetSchemaByID(ctx, id)
 }
 
 // ParseAvroSchemaWithReferences parses an avro schema that potentially has references
@@ -381,13 +472,31 @@ func (s *Service) ValidateProtobufSchema(ctx context.Context, name string, sch S
 		}
 		schemasByPath[ref.Name] = schemaRefRes.Schema
 	}
+
+	// Add common proto types
+	// The well known types are automatically added in the protoreflect protoparse package.
+	// But we need to support the other types Redpanda automatically includes.
+	// These are added in the embed package, and here we add them to the map for parsing.
+	commonProtoMap, err := embed.CommonProtoFileMap()
+	if err != nil {
+		return fmt.Errorf("failed to load common protobuf types: %w", err)
+	}
+
+	for commonPath, commonSchema := range commonProtoMap {
+		if _, exists := schemasByPath[commonPath]; !exists {
+			schemasByPath[commonPath] = commonSchema
+		}
+	}
+
 	parser := protoparse.Parser{
 		Accessor:              protoparse.FileContentsFromMap(schemasByPath),
 		InferImportPaths:      true,
 		ValidateUnlinkedFiles: true,
 		IncludeSourceCodeInfo: true,
 	}
-	_, err := parser.ParseFiles(name)
+
+	_, err = parser.ParseFiles(name)
+
 	return err
 }
 

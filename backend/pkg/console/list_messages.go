@@ -20,6 +20,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/redpanda-data/console/backend/pkg/kafka"
+	"github.com/redpanda-data/console/backend/pkg/serde"
 )
 
 const (
@@ -45,6 +46,11 @@ type ListMessageRequest struct {
 	StartTimestamp        int64 // Start offset by unix timestamp in ms
 	MessageCount          int
 	FilterInterpreterCode string
+	Troubleshoot          bool
+	IncludeRawPayload     bool
+	IgnoreMaxSizeLimit    bool
+	KeyDeserializer       serde.PayloadEncoding
+	ValueDeserializer     serde.PayloadEncoding
 }
 
 // ListMessageResponse returns the requested kafka messages along with some metadata about the operation
@@ -68,7 +74,7 @@ func (s *Service) ListMessages(ctx context.Context, listReq ListMessageRequest, 
 
 	progress.OnPhase("Get Partitions")
 	// Create array of partitionIDs which shall be consumed (always do that to ensure the requested topic exists at all)
-	metadata, restErr := s.kafkaSvc.GetSingleMetadata(ctx, listReq.TopicName)
+	metadata, restErr := s.kafkaSvc.GetSingleTopicMetadata(ctx, listReq.TopicName)
 	if restErr != nil {
 		return fmt.Errorf("failed to get partitions: %w", restErr.Err)
 	}
@@ -131,6 +137,11 @@ func (s *Service) ListMessages(ctx context.Context, listReq ListMessageRequest, 
 		MaxMessageCount:       listReq.MessageCount,
 		Partitions:            consumeRequests,
 		FilterInterpreterCode: listReq.FilterInterpreterCode,
+		Troubleshoot:          listReq.Troubleshoot,
+		IncludeRawPayload:     listReq.IncludeRawPayload,
+		IgnoreMaxSizeLimit:    listReq.IgnoreMaxSizeLimit,
+		KeyDeserializer:       listReq.KeyDeserializer,
+		ValueDeserializer:     listReq.ValueDeserializer,
 	}
 
 	progress.OnPhase("Consuming messages")

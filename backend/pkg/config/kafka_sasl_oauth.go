@@ -60,7 +60,12 @@ func (c *KafkaSASLOAuthBearer) AcquireToken(ctx context.Context) (string, error)
 	queryParams.Set("grant_type", "client_credentials")
 	queryParams.Set("scope", c.Scope)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.TokenEndpoint, strings.NewReader(queryParams.Encode()))
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.TokenEndpoint,
+		strings.NewReader(queryParams.Encode()),
+	)
 	if err != nil {
 		return "", err
 	}
@@ -89,7 +94,7 @@ func (c *KafkaSASLOAuthBearer) AcquireToken(ctx context.Context) (string, error)
 		return "", fmt.Errorf("token request failed with status code %d", resp.StatusCode)
 	}
 
-	var tokenResponse map[string]interface{}
+	var tokenResponse map[string]any
 	err = json.Unmarshal(body, &tokenResponse)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse token response: %s", err)

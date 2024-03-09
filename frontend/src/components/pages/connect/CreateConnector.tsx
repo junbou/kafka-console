@@ -19,7 +19,6 @@ import { api } from '../../../state/backendApi';
 import { uiState } from '../../../state/uiState';
 import { appGlobal } from '../../../state/appGlobal';
 import { ClusterConnectors, ConnectorValidationResult } from '../../../state/restInterfaces';
-import { Table } from 'antd';
 import { HiddenRadioList } from '../../misc/HiddenRadioList';
 import { ConnectorBoxCard, ConnectorPlugin, getConnectorFriendlyName } from './ConnectorBoxCard';
 import { ConfigPage } from './dynamic-ui/components';
@@ -31,6 +30,7 @@ import {
     AlertDescription,
     AlertIcon,
     Box,
+    DataTable,
     Flex,
     Heading,
     Link,
@@ -204,7 +204,7 @@ class CreateConnector extends PageComponent<{ clusterName: string }> {
         p.addBreadcrumb(clusterName, `/connect-clusters/${encodeURIComponent(clusterName)}`);
         p.addBreadcrumb('Create Connector', `/connect-clusters/${encodeURIComponent(clusterName)}/create-connector`);
 
-        this.refreshData(false);
+        this.refreshData(true);
         appGlobal.onRefresh = () => this.refreshData(true);
     }
 
@@ -464,7 +464,9 @@ const ConnectorWizard = observer(({ connectClusters, activeCluster }: ConnectorW
                     return currentStep < steps.length - 1 ? setCurrentStep((n) => n + 1) : undefined;
                 },
                 previous: () => {
-
+                    if(currentStep === 1) {
+                        setSelectedPlugin(null);
+                    }
                     clearErrors();
 
                     setTimeout(() => {
@@ -625,32 +627,27 @@ function ValidationDisplay({ validationResult }: { validationResult: ConnectorVa
             status="warning"
             variant="left-accent"
             my={4}
+            overflow="auto"
         >
             <AlertDescription>
                 <Box>
                     <Text as="h3" mb={4}>Submitted configuration is invalid</Text>
-                    <Table
-                        pagination={false}
-                        size={'small'}
-                        dataSource={getDataSource(validationResult)}
+                    <DataTable<{name: string, value: string | null, recommended_values: string[], errors: string[], visible: boolean}>
+                        data={getDataSource(validationResult)}
                         columns={[
                             {
-                                title: 'Property Name',
-                                dataIndex: 'name',
-                                key: 'name',
+                                header: 'Property Name',
+                                accessorKey: 'name',
                             },
                             {
-                                title: 'Current Value',
-                                dataIndex: 'value',
-                                key: 'value',
+                                header: 'Current Value',
+                                accessorKey: 'value',
                             },
                             {
-                                title: 'Validation Errors',
-                                dataIndex: 'errors',
-                                key: 'errors',
+                                header: 'Validation Errors',
+                                accessorKey: 'errors',
                             },
                         ]}
-                        rowKey={(record) => record.name}
                     />
                 </Box>
             </AlertDescription>

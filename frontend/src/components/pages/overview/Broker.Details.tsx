@@ -45,7 +45,7 @@ class BrokerDetails extends PageComponent<{ brokerId: string }> {
         const id = Number(this.props.brokerId);
         p.addBreadcrumb(`Broker #${id}`, `/overview/${id}`);
 
-        this.refreshData(false);
+        this.refreshData(true);
         appGlobal.onRefresh = () => this.refreshData(true);
     }
 
@@ -119,7 +119,7 @@ class BrokerConfigView extends Component<{ entries: ConfigEntry[] }> {
         return (
             <div className="brokerConfigView">
                 <DetailsDisplaySettings />
-                <ConfigList configEntries={entries} valueDisplay={uiSettings.brokerList.valueDisplay} />
+                <ConfigList key={uiSettings.brokerList.propsOrder} configEntries={entries} valueDisplay={uiSettings.brokerList.valueDisplay} />
             </div>
         );
     }

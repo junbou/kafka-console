@@ -21,6 +21,7 @@ import (
 
 	"github.com/cloudhut/common/logging"
 	"github.com/cloudhut/common/rest"
+	otelprometheus "go.opentelemetry.io/otel/exporters/prometheus"
 	"go.uber.org/zap"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -33,6 +34,8 @@ import (
 	"github.com/redpanda-data/console/backend/pkg/redpanda"
 	"github.com/redpanda-data/console/backend/pkg/version"
 )
+
+//go:generate mockgen -destination=./mocks/authz_hooks.go -package=mocks . AuthorizationHooks
 
 // API represents the server and all it's dependencies to serve incoming user requests
 type API struct {
@@ -56,6 +59,9 @@ type API struct {
 
 	// Hooks to add additional functionality from the outside at different places
 	Hooks *Hooks
+
+	// promExporter is used to report OpenTelemetry metrics via Prometheus scrape HTTP endpoint.
+	promExporter *otelprometheus.Exporter
 
 	// internal server intance
 	server *rest.Server
@@ -94,6 +100,11 @@ func New(cfg *config.Config, opts ...Option) *API {
 		logger.Fatal("failed to build subtree from embedded frontend files", zap.Error(err))
 	}
 
+	promExporter, err := otelprometheus.New(otelprometheus.WithoutScopeInfo(), otelprometheus.WithoutTargetInfo())
+	if err != nil {
+		logger.Fatal("failed to create prometheus exporter for open telemetry", zap.Error(err))
+	}
+
 	a := &API{
 		Cfg:               cfg,
 		Logger:            logger,
@@ -107,6 +118,7 @@ func New(cfg *config.Config, opts ...Option) *API {
 			Type:      redpanda.LicenseTypeOpenSource,
 			ExpiresAt: math.MaxInt32,
 		},
+		promExporter: promExporter,
 	}
 	a.Hooks = newCustomHooks(logger)
 	for _, opt := range opts {

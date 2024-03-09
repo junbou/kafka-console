@@ -9,9 +9,11 @@ import (
 
 	"github.com/redpanda-data/console/backend/pkg/kafka"
 	"github.com/redpanda-data/console/backend/pkg/schema"
+	"github.com/redpanda-data/console/backend/pkg/serde"
 )
 
 // Servicer is an interface for the Console package that offers all methods to serve the responses for the API layer.
+// It may also be used to virtualize Console to serve many virtual clusters with a single Console deployment.
 type Servicer interface {
 	GetAPIVersions(ctx context.Context) ([]APIVersion, error)
 	GetAllBrokerConfigs(ctx context.Context) (map[int32]BrokerConfig, error)
@@ -39,7 +41,8 @@ type Servicer interface {
 	GetKafkaVersion(ctx context.Context) (string, error)
 	ListPartitionReassignments(ctx context.Context) ([]PartitionReassignments, error)
 	AlterPartitionAssignments(ctx context.Context, topics []kmsg.AlterPartitionAssignmentsRequestTopic) ([]AlterPartitionReassignmentsResponse, error)
-	ProduceRecords(ctx context.Context, records []*kgo.Record, useTransactions bool, compressionType int8) ProduceRecordsResponse
+	ProduceRecords(ctx context.Context, records []*kgo.Record, useTransactions bool, compressionOpts []kgo.CompressionCodec) ProduceRecordsResponse
+	PublishRecord(context.Context, string, int32, []kgo.RecordHeader, *serde.RecordPayloadInput, *serde.RecordPayloadInput, bool, []kgo.CompressionCodec) (*ProduceRecordResponse, error)
 	Start() error
 	Stop()
 	IsHealthy(ctx context.Context) error
@@ -65,4 +68,29 @@ type Servicer interface {
 	CreateSchemaRegistrySchema(ctx context.Context, subjectName string, schema schema.Schema) (*CreateSchemaResponse, error)
 	ValidateSchemaRegistrySchema(ctx context.Context, subjectName string, version string, schema schema.Schema) *SchemaRegistrySchemaValidation
 	GetSchemaUsagesByID(ctx context.Context, schemaID int) ([]SchemaVersion, error)
+
+	// ------------------------------------------------------------------
+	// Plain Kafka requests, used by Connect API.
+	// The Console service was supposed to be a translation layer between the API (REST)
+	// and the Kafka package, but it's also used for virtualizing Console. Thus, even
+	// plain Kafka requests need to go through this package.
+	// ------------------------------------------------------------------
+
+	// CreateACLs proxies the request/response to CreateACLs via the Kafka API.
+	CreateACLs(ctx context.Context, createReq *kmsg.CreateACLsRequest) (*kmsg.CreateACLsResponse, error)
+	// DeleteACLsKafka proxies the request/response via the Kafka API.
+	DeleteACLsKafka(ctx context.Context, deleteReq *kmsg.DeleteACLsRequest) (*kmsg.DeleteACLsResponse, error)
+	// CreateTopics proxies the request/response to create topics via the Kafka API.
+	CreateTopics(ctx context.Context, createReq *kmsg.CreateTopicsRequest) (*kmsg.CreateTopicsResponse, error)
+	// DescribeConfigs proxies the request/response for describing topic or broker configs via
+	// the Kafka API.
+	DescribeConfigs(ctx context.Context, req *kmsg.DescribeConfigsRequest) (*kmsg.DescribeConfigsResponse, error)
+	// DeleteTopics proxies the request/response to delete topics via the Kafka API.
+	DeleteTopics(ctx context.Context, deleteReq *kmsg.DeleteTopicsRequest) (*kmsg.DeleteTopicsResponse, error)
+	// GetMetadata proxies the request/response to retrieve metadata via the Kafka API.
+	GetMetadata(ctx context.Context, metadataReq *kmsg.MetadataRequest) (*kmsg.MetadataResponse, error)
+	// IncrementalAlterConfigsKafka proxies the request/response to incrementally alter configs via the Kafka API.
+	IncrementalAlterConfigsKafka(ctx context.Context, req *kmsg.IncrementalAlterConfigsRequest) (*kmsg.IncrementalAlterConfigsResponse, error)
+	// AlterConfigs proxies the request/response to set configs (not incrementally) via the Kafka API.
+	AlterConfigs(ctx context.Context, req *kmsg.AlterConfigsRequest) (*kmsg.AlterConfigsResponse, error)
 }

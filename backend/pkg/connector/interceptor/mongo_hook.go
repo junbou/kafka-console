@@ -58,7 +58,7 @@ func KafkaConnectToConsoleMongoDBHook(config map[string]string) map[string]strin
 }
 
 func setConnectionURI(config map[string]any) {
-	if _, exists := config["connection.uri"]; !exists {
+	if _, exists := config["connection.uri"]; !exists || config["connection.uri"] == "mongodb://" {
 		if _, exists := config["connection.url"]; exists {
 			config["connection.uri"] = config["connection.url"]
 		} else {
@@ -67,7 +67,8 @@ func setConnectionURI(config map[string]any) {
 	}
 
 	if config["connection.username"] != nil && config["connection.password"] != nil && config["connection.url"] != nil {
-		password := config["connection.password"].(string)
+		//nolint:revive // Empty password is handled
+		password, _ := config["connection.password"].(string)
 		if hasKafkaConnectConfigProvider(config["connection.password"].(string)) {
 			password = passwordPlaceholder
 		}
@@ -105,8 +106,9 @@ func getFormatOutputString(converter any) string {
 
 func getPostProcessorChain(postProcessorChain any, keyProjectionType any, valueProjectionType any, fieldRenamerMapping any) string {
 	var postProcessorChainResult string
-	if postProcessorChain != nil {
-		postProcessorChainResult = postProcessorChain.(string)
+	postProcessorChainStr, ok := postProcessorChain.(string)
+	if ok {
+		postProcessorChainResult = postProcessorChainStr
 	} else {
 		postProcessorChainResult = "com.mongodb.kafka.connect.sink.processor.DocumentIdAdder"
 	}
@@ -192,6 +194,24 @@ func KafkaConnectValidateToConsoleMongoDBHook(response model.ValidationResponse,
 			Value: model.ConfigDefinitionValue{
 				Name:              "connection.password",
 				Value:             "",
+				RecommendedValues: []string{},
+				Visible:           true,
+				Errors:            []string{},
+			},
+		},
+		model.ConfigDefinition{
+			Definition: model.ConfigDefinitionKey{
+				Name:          "producer.override.max.request.size",
+				Type:          "INT",
+				DefaultValue:  "1048576",
+				Importance:    "MEDIUM",
+				Required:      false,
+				DisplayName:   "Max size of a request",
+				Documentation: "The maximum size of a request in bytes. This setting will limit the number of record batches the producer will send in a single request to avoid sending huge requests. This is also effectively a cap on the maximum uncompressed record batch size. Note that the server has its own cap on the record batch size (after compression if compression is enabled) which may be different from this. The default is 1048576",
+			},
+			Value: model.ConfigDefinitionValue{
+				Name:              "producer.override.max.request.size",
+				Value:             "1048576",
 				RecommendedValues: []string{},
 				Visible:           true,
 				Errors:            []string{},

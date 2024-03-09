@@ -14,8 +14,10 @@ import { assignDeep, randomId } from '../utils/utils';
 import { clone } from '../utils/jsonUtils';
 import { DEFAULT_TABLE_PAGE_SIZE } from '../components/constants';
 import { TopicTabId } from '../components/pages/topics/Topic.Details';
-import { GetAclsRequest, AclRequestDefault, EncodingType } from './restInterfaces';
+import { GetAclsRequest, AclRequestDefault } from './restInterfaces';
 import { ConnectTabKeys } from '../components/pages/connect/Overview';
+import { PayloadEncoding } from '../protogen/redpanda/api/console/v1alpha1/common_pb';
+import { SortingState } from '@redpanda-data/ui';
 
 const settingsName = 'uiSettings-v3';
 
@@ -42,9 +44,11 @@ export interface PreviewTagV2 {
     searchInMessageValue: boolean;
 }
 
+export type DataColumnKey = 'offset' | 'partitionID' | 'timestamp' | 'key' | 'value' | 'keySize' | 'valueSize';
+
 export interface ColumnList {
     title: string;
-    dataIndex: string;
+    dataIndex: DataColumnKey;
 }
 
 export type FilterType = 'code';
@@ -64,7 +68,7 @@ export class FilterEntry {
     @observable code: string = 'return true\n//allow all messages'; // js code the user entered
 }
 
-export type TimestampDisplayFormat = 'default' | 'unixTimestamp' | 'onlyDate' | 'onlyTime' | 'unixSeconds' | 'relative';
+export type TimestampDisplayFormat = 'default' | 'unixTimestamp' | 'onlyDate' | 'onlyTime' | 'unixMillis' | 'relative';
 export function IsLocalTimestampFormat(timestampType: TimestampDisplayFormat) {
     switch (timestampType) {
         case 'default':
@@ -102,6 +106,9 @@ export class TopicDetailsSettings {
         startTimestampWasSetByUser: false, // only used in frontend, to track whether we should update the timestamp to 'now' when the page loads
         partitionID: -1,
         maxResults: 50,
+        page: 0,
+        pageSize: 10,
+        sorting: [] as SortingState,
 
         filtersEnabled: false,
         filters: [] as FilterEntry[],
@@ -125,11 +132,14 @@ export class TopicDetailsSettings {
     @observable previewTimestamps = 'default' as TimestampDisplayFormat;
     @observable previewColumnFields = [] as ColumnList[];
 
+    @observable keyDeserializer = PayloadEncoding.UNSPECIFIED as PayloadEncoding;
+    @observable valueDeserializer = PayloadEncoding.UNSPECIFIED as PayloadEncoding;
+
     @observable consumerPageSize = 20;
     @observable partitionPageSize = 20;
     @observable aclPageSize = 20;
 
-    @observable produceRecordEncoding = 'json' as EncodingType;
+    @observable produceRecordEncoding = PayloadEncoding.TEXT as PayloadEncoding | 'base64';
 
     @observable quickSearch = '';
 }
@@ -195,6 +205,10 @@ const defaultUiSettings = {
         propsOrder: 'changedFirst' as 'changedFirst' | 'default' | 'alphabetical',
 
         configViewType: 'structured' as 'structured' | 'table',
+    },
+
+    connectorsList: {
+        quickSearch: ''
     },
 
     consumerGroupList: {

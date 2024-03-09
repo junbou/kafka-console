@@ -12,23 +12,21 @@
 import { observer } from 'mobx-react';
 import { PageComponent, PageInitHelper } from '../Page';
 import { api } from '../../../state/backendApi';
-import { uiSettings } from '../../../state/ui';
-import { sortField } from '../../misc/common';
 import { BrokerWithConfigAndStorage, OverviewStatus, RedpandaLicense } from '../../../state/restInterfaces';
 import { computed, makeObservable } from 'mobx';
 import { prettyBytes, prettyBytesOrNA, titleCase } from '../../../utils/utils';
 import { appGlobal } from '../../../state/appGlobal';
 import { CrownOutlined } from '@ant-design/icons';
 import { DefaultSkeleton } from '../../../utils/tsxUtils';
-import { KowlColumnType, KowlTable } from '../../misc/KowlTable';
 import Section from '../../misc/Section';
 import PageContent from '../../misc/PageContent';
 import './Overview.scss';
-import { Button, Flex, Heading, Icon, Link, Skeleton, Tooltip } from '@redpanda-data/ui';
+import { Button, DataTable, Flex, Heading, Icon, Link, Skeleton, Tooltip, Grid, GridItem } from '@redpanda-data/ui';
 import { CheckIcon } from '@primer/octicons-react';
 import { Link as ReactRouterLink } from 'react-router-dom';
-import React from 'react';
+import React, { FC } from 'react';
 import { Statistic } from '../../misc/Statistic';
+import { Row } from '@tanstack/react-table';
 
 @observer
 class Overview extends PageComponent {
@@ -45,7 +43,7 @@ class Overview extends PageComponent {
         p.title = 'Overview';
         p.addBreadcrumb('Overview', '/overview');
 
-        this.refreshData(false);
+        this.refreshData(true);
         appGlobal.onRefresh = () => this.refreshData(true);
     }
 
@@ -69,57 +67,14 @@ class Overview extends PageComponent {
         const renderIdColumn = (text: string, record: BrokerWithConfigAndStorage) => {
             if (!record.isController) return text;
             return (
-                <>
+                <Flex alignItems="center" gap={4}>
                     {text}
                     <Tooltip label="This broker is the current controller of the cluster" placement="right" hasArrow>
                         <CrownOutlined style={{ padding: '2px', fontSize: '16px', color: '#0008', float: 'right' }} />
                     </Tooltip>
-                </>
+                </Flex>
             );
         };
-
-        const columns: KowlColumnType<BrokerWithConfigAndStorage>[] = [
-            {
-                width: '80px',
-                title: 'ID',
-                dataIndex: 'brokerId',
-                render: renderIdColumn,
-                sorter: sortField('brokerId'),
-                defaultSortOrder: 'ascend'
-            },
-            {
-                width: 'auto',
-                title: 'Status',
-                render: (_, _r) => {
-                    return (
-                        <>
-                            <Icon as={CheckIcon} fontSize="18px" marginRight="5px" color="green.500" />
-                            Running
-                        </>
-                    );
-                }
-            },
-            {
-                width: '120px',
-                title: 'Size',
-                dataIndex: 'totalLogDirSizeBytes',
-                render: (t: number) => prettyBytesOrNA(t),
-                sorter: sortField('totalLogDirSizeBytes')
-            },
-            {
-                width: '100px',
-                title: '',
-                render: (_, r) => {
-                    return (
-                        <Button size="sm" variant="ghost" onClick={() => appGlobal.history.push('/overview/' + r.brokerId)}>
-                            View
-                        </Button>
-                    );
-                }
-            }
-        ];
-
-        if (this.hasRack) columns.splice(3, 0, { width: '100px', title: 'Rack', render: (_, r) => r.rack });
 
         const version = overview.redpanda.version ?? overview.kafka.version;
         const news = api.news?.filter(e => {
@@ -184,15 +139,49 @@ class Overview extends PageComponent {
 
                     <Section py={4} gridArea="broker">
                         <Heading as="h3" >Broker Details</Heading>
-                        <KowlTable
-                            dataSource={brokers}
-                            columns={columns}
-                            observableSettings={uiSettings.brokerList}
-                            rowKey={(x) => x.brokerId.toString()}
-                            rowClassName={() => 'pureDisplayRow'}
-                            pagination={{
-                                visible: false
-                            }}
+                        <DataTable<BrokerWithConfigAndStorage>
+                            data={brokers}
+                            sorting={false}
+                            defaultPageSize={10}
+                            pagination
+                            columns={[
+                                {
+                                    size: 80,
+                                    header: 'ID',
+                                    accessorKey: 'brokerId',
+                                    cell: ({row: {original: broker}}) => renderIdColumn(`${broker.brokerId}`, broker),
+                                },
+                                {
+                                    header: 'Status',
+                                    cell: () =>
+                                        (
+                                            <>
+                                                <Icon as={CheckIcon} fontSize="18px" marginRight="5px" color="green.500"/>
+                                                Running
+                                            </>
+                                        ),
+                                    size: Infinity
+                                },
+                                {
+                                    size: 120,
+                                    header: 'Size',
+                                    accessorKey: 'totalLogDirSizeBytes',
+                                    cell: ({row: {original: {totalLogDirSizeBytes}}}) => totalLogDirSizeBytes && prettyBytesOrNA(totalLogDirSizeBytes),
+                                },
+                                {
+                                    id: 'view',
+                                    size: 100,
+                                    header: '',
+                                    cell: ({row: {original: broker}}) => {
+                                        return (
+                                            <Button size="sm" variant="ghost" onClick={() => appGlobal.history.push('/overview/' + broker.brokerId)}>
+                                                View
+                                            </Button>
+                                        );
+                                    }
+                                },
+                                ...(this.hasRack ? [{ size: 100, header: 'Rack', cell: ({row: {original: broker}}: {row: Row<BrokerWithConfigAndStorage>}) => broker.rack }] : [])
+                            ]}
                         />
                     </Section>
 
@@ -215,7 +204,6 @@ class Overview extends PageComponent {
                                 <Skeleton
                                     isLoaded={Boolean(news)}
                                     noOfLines={4}
-                                    height={4}
                                 >
                                     {news?.map((x, i) => <li key={i}>
                                         <a href={x.url} rel="noopener noreferrer" target="_blank"
@@ -259,6 +247,49 @@ const ResourcesBadge = (p: { type?: string | undefined }) => {
 };
 
 
+type DetailsBlockProps = { title: string, children?: React.ReactNode }
+
+const DetailsBlock: FC<DetailsBlockProps> = ({title, children}) => {
+    return <>
+        <GridItem colSpan={{base: 1, lg: 3}}>
+            <Heading
+                as="h4"
+                fontSize={10}
+                fontWeight={600}
+                color="gray.500"
+                textTransform="uppercase"
+                letterSpacing={0.8}
+                mb={1}
+            >
+                {title}
+            </Heading>
+        </GridItem>
+        {children}
+        <GridItem colSpan={{base: 1, lg: 3}} height={0.25} my={4} bg="#ddd" />
+    </>;
+};
+
+type DetailsProps = { title: string, content: ([left?: React.ReactNode, right?: React.ReactNode] | undefined)[] }
+
+const Details: FC<DetailsProps> = ({title, content}) => {
+    const [[firstLeft, firstRight] = [], ...rest] = content;
+    return (
+        <>
+            <GridItem>
+                <Heading as="h5">{title}</Heading>
+            </GridItem>
+            <GridItem>{firstLeft}</GridItem>
+            <GridItem>{firstRight}</GridItem>
+
+            {rest?.map(([left, right] = [], idx) => <React.Fragment key={idx}>
+                <GridItem/>
+                <GridItem>{left}</GridItem>
+                <GridItem>{right}</GridItem>
+            </React.Fragment>)}
+        </>
+    );
+};
+
 function ClusterDetails() {
     const overview = api.clusterOverview;
     const brokers = api.brokers;
@@ -282,41 +313,6 @@ function ClusterDetails() {
     const redpandaLicense = prettyLicense(overview.redpanda.license);
 
 
-    const DetailsBlock = (p: { title: string, children?: React.ReactNode }) => {
-        return <>
-            <h4>{p.title}</h4>
-            {p.children}
-            <div className="separationLine"></div>
-        </>
-    }
-
-    const Details = (p: { title: string, content: ([left?: React.ReactNode, right?: React.ReactNode] | undefined)[] }) => {
-        const { title, content } = p;
-
-        const lines = [];
-        for (let i = 0; i < content.length; i++) {
-            const pair = content[i];
-            if (!pair) continue;
-            let [left, right] = pair;
-            if (!left) continue;
-
-            if (typeof left == 'string')
-                left = <div>{left}</div>
-            if (typeof right == 'string')
-                right = <div>{right}</div>
-
-            const isFirst = i == 0;
-
-            lines.push(<React.Fragment key={i}>
-                {isFirst ? <h5>{title}</h5> : <div />}
-                {left}
-                {right ? right : <div />}
-            </React.Fragment>);
-        }
-
-        return <>{lines}</>;
-    };
-
     const formatStatus = (overviewStatus: OverviewStatus): React.ReactNode => {
         let status = <div>{titleCase(overviewStatus.status)}</div>;
         if (overviewStatus.statusReason)
@@ -337,14 +333,19 @@ function ClusterDetails() {
         }
     });
 
-    return <div className="clusterDetails">
+    return <Grid
+        w="full"
+        templateColumns={{ base: 'auto', lg: 'repeat(3, auto)' }}
+        gap={2}
+        alignItems="center"
+    >
         <DetailsBlock title="Services">
             <Details title="Kafka Connect" content={hasConnect
                 ? clusterLines.map(c => [c.name, c.status])
                 : [
                     ['Not configured']
                 ]
-            } />
+            }/>
             <Details title="Schema Registry" content={overview.schemaRegistry.isConfigured
                 ? [
                     [
@@ -357,43 +358,40 @@ function ClusterDetails() {
                 : [
                     ['Not configured']
                 ]
-            } />
+            }/>
 
         </DetailsBlock>
-
 
         <DetailsBlock title="Storage">
             <Details title="Total Bytes" content={[
                 [prettyBytesOrNA(totalStorageBytes)]
-            ]} />
+            ]}/>
 
             <Details title="Primary" content={[
                 [prettyBytesOrNA(totalPrimaryStorageBytes)]
-            ]} />
+            ]}/>
 
             <Details title="Replicated" content={[
                 [prettyBytesOrNA(totalReplicatedStorageBytes)]
-            ]} />
+            ]}/>
         </DetailsBlock>
 
 
-        <DetailsBlock title="Security" >
+        <DetailsBlock title="Security">
             <Details title="Service Accounts" content={[
                 [<Link key={0} as={ReactRouterLink} to="/acls/">{serviceAccounts}</Link>]
-            ]} />
+            ]}/>
 
             <Details title="ACLs" content={[
                 [<Link key={0} as={ReactRouterLink} to="/acls/">{aclCount}</Link>]
-            ]} />
+            ]}/>
         </DetailsBlock>
-
 
         <Details title="Licensing" content={[
             consoleLicense && ['Console ' + consoleLicense.name, consoleLicense.expires],
             redpandaLicense && ['Redpanda ' + redpandaLicense.name, redpandaLicense.expires],
-        ]} />
-
-    </div>
+        ]}/>
+    </Grid>;
 }
 
 function prettyLicenseType(type: string) {

@@ -13,6 +13,8 @@ package acl
 import (
 	"context"
 	"errors"
+	"net/http"
+	"strconv"
 
 	"connectrpc.com/connect"
 	"github.com/twmb/franz-go/pkg/kerr"
@@ -55,7 +57,7 @@ func NewService(cfg *config.Config,
 func (s *Service) ListACLs(ctx context.Context, req *connect.Request[v1alpha1.ListACLsRequest]) (*connect.Response[v1alpha1.ListACLsResponse], error) {
 	s.defaulter.applyListACLsRequest(req.Msg)
 
-	kafkaReq, err := s.kafkaClientMapper.aclFilterToKafka(req.Msg.Filter)
+	kafkaReq, err := s.kafkaClientMapper.listACLFilterToDescribeACLKafka(req.Msg.Filter)
 	if err != nil {
 		return nil, apierrors.NewConnectError(
 			connect.CodeInternal, // Internal because all input should already be validated, and thus no err possible
@@ -88,17 +90,7 @@ func (s *Service) ListACLs(ctx context.Context, req *connect.Request[v1alpha1.Li
 	// Handle Kafka error that may be set as part of the Kafka response
 	kafkaRes := aclOverview.KafkaResponse
 	if kafkaRes.ErrorCode != 0 {
-		kafkaErr := kerr.ErrorForCode(kafkaRes.ErrorCode)
-
-		errMsg := kafkaErr.Error()
-		if kafkaRes.ErrorMessage != nil {
-			errMsg = *kafkaRes.ErrorMessage
-		}
-		return nil, apierrors.NewConnectError(
-			connect.CodeInternal,
-			errors.New(errMsg),
-			apierrors.NewErrorInfo(v1alpha1.Reason_REASON_KAFKA_API_ERROR.String(), apierrors.KeyValsFromKafkaError(kafkaErr)...),
-		)
+		return nil, apierrors.NewConnectErrorFromKafkaErrorCode(kafkaRes.ErrorCode, kafkaRes.ErrorMessage)
 	}
 
 	resources := make([]*v1alpha1.ListACLsResponse_Resource, len(kafkaRes.Resources))
@@ -118,19 +110,98 @@ func (s *Service) ListACLs(ctx context.Context, req *connect.Request[v1alpha1.Li
 }
 
 // CreateACL implements the handler for the create ACL endpoint.
-func (*Service) CreateACL(context.Context, *connect.Request[v1alpha1.CreateACLRequest]) (*connect.Response[v1alpha1.CreateACLResponse], error) {
-	return nil, apierrors.NewConnectError(
-		connect.CodeUnimplemented,
-		errors.New("endpoint is not implemented"),
-		apierrors.NewErrorInfo(v1alpha1.Reason_REASON_CONSOLE_ERROR.String()),
-	)
+func (s *Service) CreateACL(ctx context.Context, req *connect.Request[v1alpha1.CreateACLRequest]) (*connect.Response[v1alpha1.CreateACLResponse], error) {
+	s.defaulter.applyCreateACLRequest(req.Msg)
+
+	kafkaReq, err := s.kafkaClientMapper.aclCreateRequestToKafka(req.Msg)
+	if err != nil {
+		return nil, apierrors.NewConnectError(
+			connect.CodeInternal, // Internal because all input should already be validated, and thus no err possible
+			err,
+			apierrors.NewErrorInfo(v1alpha1.Reason_REASON_CONSOLE_ERROR.String()),
+		)
+	}
+
+	res, err := s.consoleSvc.CreateACLs(ctx, kafkaReq)
+	if err != nil {
+		return nil, apierrors.NewConnectError(
+			connect.CodeInternal,
+			err,
+			apierrors.NewErrorInfo(v1alpha1.Reason_REASON_KAFKA_API_ERROR.String(), apierrors.KeyValsFromKafkaError(err)...),
+		)
+	}
+
+	if len(res.Results) != 1 {
+		// Should never happen since we only create one ACL, but if it happens we want to err early.
+		return nil, apierrors.NewConnectError(
+			connect.CodeInternal,
+			errors.New("unexpected number of results in create ACL response"),
+			apierrors.NewErrorInfo(v1alpha1.Reason_REASON_CONSOLE_ERROR.String(), apierrors.KeyVal{
+				Key:   "retrieved_results",
+				Value: strconv.Itoa(len(res.Results)),
+			}),
+		)
+	}
+
+	// Check for inner Kafka error
+	result := res.Results[0]
+	if result.ErrorCode != 0 {
+		return nil, apierrors.NewConnectErrorFromKafkaErrorCode(result.ErrorCode, result.ErrorMessage)
+	}
+
+	connectResponse := connect.NewResponse(&v1alpha1.CreateACLResponse{})
+	connectResponse.Header().Set("x-http-code", strconv.Itoa(http.StatusCreated))
+
+	return connectResponse, nil
 }
 
 // DeleteACLs implements the handler for the delete ACL endpoint.
-func (*Service) DeleteACLs(context.Context, *connect.Request[v1alpha1.DeleteACLsRequest]) (*connect.Response[v1alpha1.DeleteACLsResponse], error) {
-	return nil, apierrors.NewConnectError(
-		connect.CodeUnimplemented,
-		errors.New("endpoint is not implemented"),
-		apierrors.NewErrorInfo(v1alpha1.Reason_REASON_CONSOLE_ERROR.String()),
-	)
+func (s *Service) DeleteACLs(ctx context.Context, req *connect.Request[v1alpha1.DeleteACLsRequest]) (*connect.Response[v1alpha1.DeleteACLsResponse], error) {
+	// TODO: Ensure that neither req, req.Msg or req.Msg.Filter can never be nil
+	kafkaReq, err := s.kafkaClientMapper.deleteACLFilterToDeleteACLKafka(req.Msg.Filter)
+	if err != nil {
+		return nil, apierrors.NewConnectError(
+			connect.CodeInternal, // Internal because all input should already be validated, and thus no err possible
+			err,
+			apierrors.NewErrorInfo(v1alpha1.Reason_REASON_CONSOLE_ERROR.String()),
+		)
+	}
+
+	res, err := s.consoleSvc.DeleteACLsKafka(ctx, kafkaReq)
+	if err != nil {
+		return nil, apierrors.NewConnectError(
+			connect.CodeInternal,
+			err,
+			apierrors.NewErrorInfo(v1alpha1.Reason_REASON_KAFKA_API_ERROR.String(), apierrors.KeyValsFromKafkaError(err)...),
+		)
+	}
+
+	if len(res.Results) != 1 {
+		// Should never happen since we only delete one ACL, but if it happens we want to err early.
+		return nil, apierrors.NewConnectError(
+			connect.CodeInternal,
+			errors.New("unexpected number of results in delete ACL response"),
+			apierrors.NewErrorInfo(v1alpha1.Reason_REASON_CONSOLE_ERROR.String(), apierrors.KeyVal{
+				Key:   "retrieved_results",
+				Value: strconv.Itoa(len(res.Results)),
+			}),
+		)
+	}
+
+	// Check for inner Kafka error
+	result := res.Results[0]
+	if result.ErrorCode != 0 {
+		return nil, apierrors.NewConnectErrorFromKafkaErrorCode(result.ErrorCode, result.ErrorMessage)
+	}
+
+	matchingACLsProto, err := s.kafkaClientMapper.deleteACLMatchingResultsToProtos(result.MatchingACLs)
+	if err != nil {
+		return nil, apierrors.NewConnectError(
+			connect.CodeInternal,
+			err,
+			apierrors.NewErrorInfo(v1alpha1.Reason_REASON_CONSOLE_ERROR.String()),
+		)
+	}
+
+	return connect.NewResponse(&v1alpha1.DeleteACLsResponse{MatchingAcls: matchingACLsProto}), nil
 }
