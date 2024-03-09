@@ -108,6 +108,7 @@ func New(cfg *config.Config, opts ...Option) *API {
 			ExpiresAt: math.MaxInt32,
 		},
 	}
+	a.Hooks = newCustomHooks(logger)
 	for _, opt := range opts {
 		opt(a)
 	}

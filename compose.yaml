@@ -1,0 +1,12 @@
+services:
+  kafka-ui:
+    image: console:1
+    network_mode: host
+    environment:
+      CONSOLE_USERNAME: admin
+      CONSOLE_PASSWORD: password
+      KAFKA_BROKERS: localhost:9092
+      KAFKA_SASL_ENABLED: true
+      KAFKA_SASL_MECHANISM: PLAIN
+      KAFKA_SASL_USERNAME: kfuser
+      KAFKA_SASL_PASSWORD: kfpass
